@@ -1,6 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = 'https://rsrhzvuwndagyqxilaej.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJzcmh6dnV3bmRhZ3lxeGlsYWVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAwMjI1MDIsImV4cCI6MjA2NTU5ODUwMn0.1ApiiemxRuNhoKftypI-PlpDtyW3NZxTwgwshHnTy-Y';
+// As variáveis de ambiente do Supabase devem ser configuradas no Vercel.
+// Use os nomes VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// Verificação opcional para ajudar na depuração durante o desenvolvimento.
+// Em produção, espera-se que essas variáveis estejam sempre definidas.
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error("ERRO: Variáveis de ambiente do Supabase não configuradas! Verifique VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no Vercel.");
+  // Considere adicionar um tratamento de erro mais robusto aqui se for crítico para o carregamento do app.
+  // Por exemplo, você pode redirecionar para uma página de erro ou exibir uma mensagem amigável.
+}
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
