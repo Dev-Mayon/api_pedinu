@@ -44,7 +44,7 @@ const useCatalogData = (businessSlug, toast) => {
         throw profileError;
       }
 
-      const userId = profileData.id;
+      const userId = profileData.id; // Este é o ID do perfil/negócio que precisamos
 
       const { data: deliveryZones, error: deliveryError } = await supabase
         .from('delivery_zones')
@@ -66,7 +66,9 @@ const useCatalogData = (businessSlug, toast) => {
         products: products.filter(product => product.category_id === category.id)
       }));
 
+      // AQUI É ONDE O ID DO NEGÓCIO É ADICIONADO!
       const formattedBusinessData = {
+        id: userId, // <-- LINHA ADICIONADA/CORRIGIDA!
         businessName: businessInfo.business_name,
         businessSlug: businessInfo.business_slug,
         categories: categoriesWithProducts,
