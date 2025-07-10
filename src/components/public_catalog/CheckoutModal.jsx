@@ -21,7 +21,7 @@ const CheckoutModal = ({
   deliveryZones,
   businessData,
   onOrderSuccess,
-} ) => {
+}) => {
   const { toast } = useToast();
   const { customer, setCustomer, selectedAddress } = useCustomer();
   const [step, setStep] = useState('details');
@@ -252,6 +252,8 @@ const CheckoutModal = ({
         });
         onOrderSuccess(newOrderId);
       } else if (['Pix', 'Cartão de Crédito'].includes(customerData.paymentMethod)) {
+        // ✅ ADICIONE ESTA LINHA:
+        console.log('Verificando businessData antes do fetch:', businessData);
         // Lógica para chamar a Edge Function e redirecionar para o Mercado Pago
         try {
           // ATENÇÃO: SUBSTITUA <SUA_URL_COMPLETA_DA_EDGE_FUNCTION> PELA URL REAL DA SUA FUNÇÃO NO SUPABASE
@@ -269,7 +271,7 @@ const CheckoutModal = ({
                   name: item.name,
                   quantity: item.quantity,
                   price: item.finalPrice, // Usar finalPrice ou price, dependendo da sua estrutura
-                } )),
+                })),
                 customerDetails: {
                   name: customerData.name,
                   email: customerData.email,
@@ -293,7 +295,7 @@ const CheckoutModal = ({
           const redirectUrl = `https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=${preferenceId}`;
           window.location.href = redirectUrl;
 
-        } catch (mpError ) {
+        } catch (mpError) {
           console.error('🔥 Erro ao chamar Edge Function do Mercado Pago:', mpError);
           toast({
             title: "Erro de Pagamento",
