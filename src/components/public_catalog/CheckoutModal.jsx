@@ -256,7 +256,7 @@ const CheckoutModal = ({
         try {
           // ATENÇÃO: SUBSTITUA <SUA_URL_COMPLETA_DA_EDGE_FUNCTION> PELA URL REAL DA SUA FUNÇÃO NO SUPABASE
           const response = await fetch(
-            'https://rshzvwmdagyqvilasj.supabase.co/functions/v1/create-mercadopago-preference', // EX: https://<SEU_PROJECT_REF>.supabase.co/functions/v1/create-mercadopago-preference
+            'https://rsrhzvuwndagyqxilaej.supabase.co/functions/v1/create-mercadopago-preference', // EX: https://<SEU_PROJECT_REF>.supabase.co/functions/v1/create-mercadopago-preference
             {
               method: 'POST',
               headers: {
