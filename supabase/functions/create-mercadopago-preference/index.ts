@@ -24,13 +24,14 @@ Deno.serve(async (req) => {
         ensure(body.businessSlug, 'businessSlug');
         ensure(body.cart, 'cart');
         ensure(body.customerDetails, 'customerDetails');
+        ensure(body.paymentMethod, 'paymentMethod'); // Agora é obrigatório
 
         const { 
             businessSlug, 
             cart, 
             customerDetails, 
             deliveryFee = 0,
-            paymentMethod = 'credit_card' // Novo parâmetro para determinar o tipo de pagamento
+            paymentMethod // 'pix' ou 'cartao_entrega'
         } = body;
 
         const supabase = createClient(
@@ -50,19 +51,7 @@ Deno.serve(async (req) => {
         }
         const userId = profile.id;
 
-        // 2. Busca as credenciais de pagamento
-        const { data: paymentSettings } = await supabase
-            .from('payment_settings')
-            .select('mercadopago_access_token')
-            .eq('user_id', userId)
-            .single();
-
-        if (!paymentSettings?.mercadopago_access_token) {
-            throw new Error('Credenciais do Mercado Pago não configuradas.');
-        }
-        const accessToken = paymentSettings.mercadopago_access_token;
-
-        // 3. Prepara os itens para o Mercado Pago e calcula o total
+        // 2. Prepara os itens e calcula o total
         const itemsForMp = cart.map((item) => ({
             id: item.id,
             title: item.name,
@@ -82,19 +71,7 @@ Deno.serve(async (req) => {
         }
         const totalAmount = itemsForMp.reduce((sum, i) => sum + i.unit_price * i.quantity, 0);
 
-        // 4. ✅ CORREÇÃO: Mapear corretamente os valores do enum do banco
-        // Baseado no erro anterior, os valores aceitos são diferentes
-        const mapPaymentMethodToDb = (method) => {
-            const mapping = {
-                'pix': 'pix',
-                'credit_card': 'online', // ou outro valor que funcione
-                'debit_card': 'debit_card',
-                'cash': 'cash'
-            };
-            return mapping[method] || 'pix'; // fallback para pix
-        };
-
-        // Cria um objeto limpo para o banco de dados
+        // 3. Cria o pedido no banco de dados
         const orderForDb = {
             user_id: userId,
             customer_name: customerDetails.name,
@@ -103,14 +80,12 @@ Deno.serve(async (req) => {
             delivery_address: `${customerDetails.address}, ${customerDetails.neighborhood}`,
             items: cart,
             total: totalAmount,
-            // ✅ CORREÇÃO: Usar o mapeamento correto
-            payment_method: mapPaymentMethodToDb(paymentMethod),
+            payment_method: paymentMethod === 'pix' ? 'pix' : 'debit_card', // ou outro valor que funcione para cartão
             order_type: deliveryFee > 0 ? 'delivery' : 'pickup',
             status: 'received',
-            payment_status: 'pending',
+            payment_status: paymentMethod === 'pix' ? 'pending' : 'paid_on_delivery',
         };
 
-        // 5. Insere o pedido no banco de dados
         const { data: newOrder, error: orderError } = await supabase
             .from('kitchen_orders')
             .insert(orderForDb)
@@ -123,9 +98,20 @@ Deno.serve(async (req) => {
         }
         const internalOrderId = newOrder.id;
 
-        // 6. FLUXO DIFERENCIADO: PIX vs CARTÃO
+        // 4. FLUXO DIFERENCIADO
         if (paymentMethod === 'pix') {
-            // ✅ FLUXO PIX: Cria pagamento PIX direto
+            // ✅ FLUXO PIX: Busca credenciais e cria pagamento PIX
+            const { data: paymentSettings } = await supabase
+                .from('payment_settings')
+                .select('mercadopago_access_token')
+                .eq('user_id', userId)
+                .single();
+
+            if (!paymentSettings?.mercadopago_access_token) {
+                throw new Error('Credenciais do Mercado Pago não configuradas.');
+            }
+            const accessToken = paymentSettings.mercadopago_access_token;
+
             const pixPaymentBody = {
                 transaction_amount: totalAmount,
                 description: `Pedido #${internalOrderId} - ${businessSlug}`,
@@ -136,7 +122,7 @@ Deno.serve(async (req) => {
                     last_name: customerDetails.name.split(' ').slice(1).join(' ') || customerDetails.name.split(' ')[0],
                     identification: {
                         type: 'CPF',
-                        number: '00000000000' // Placeholder - PIX não exige CPF obrigatório
+                        number: '00000000000' // Placeholder
                     }
                 },
                 external_reference: String(internalOrderId),
@@ -167,6 +153,7 @@ Deno.serve(async (req) => {
 
             // Retorna dados do PIX para o frontend
             return new Response(JSON.stringify({
+                success: true,
                 paymentType: 'pix',
                 paymentId: pixPayment.id,
                 qrCode: pixPayment.point_of_interaction?.transaction_data?.qr_code,
@@ -178,37 +165,13 @@ Deno.serve(async (req) => {
             });
 
         } else {
-            // ✅ FLUXO CARTÃO: Mantém o comportamento atual (preferência)
-            const preferenceBody = {
-                items: itemsForMp,
-                payer: { name: customerDetails.name, email: customerDetails.email },
-                back_urls: {
-                    success: `${Deno.env.get('SITE_URL')}/payment-status`,
-                    failure: `${Deno.env.get('SITE_URL')}/payment-status`,
-                    pending: `${Deno.env.get('SITE_URL')}/payment-status`,
-                },
-                auto_return: 'approved',
-                external_reference: String(internalOrderId),
-                notification_url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/mercadopago-webhook?order_id=${internalOrderId}`,
-            };
-
-            const mpResponse = await fetch('https://api.mercadopago.com/checkout/preferences', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify(preferenceBody),
-            });
-
-            const preference = await mpResponse.json();
-            if (!mpResponse.ok) throw new Error(`Erro ao criar preferência no MP: ${preference.message}`);
-
-            await supabase
-                .from('kitchen_orders')
-                .update({ mercadopago_preference_id: preference.id })
-                .eq('id', internalOrderId);
-
-            return new Response(JSON.stringify({ 
-                paymentType: 'preference',
-                preferenceId: preference.id 
+            // ✅ FLUXO CARTÃO NA ENTREGA: Apenas confirma o pedido
+            return new Response(JSON.stringify({
+                success: true,
+                paymentType: 'cartao_entrega',
+                orderId: internalOrderId,
+                totalAmount: totalAmount,
+                message: 'Pedido registrado! Pagamento será feito na entrega.'
             }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
@@ -216,7 +179,10 @@ Deno.serve(async (req) => {
 
     } catch (err) {
         console.error('Erro na Edge Function:', err);
-        return new Response(JSON.stringify({ error: err.message }), {
+        return new Response(JSON.stringify({ 
+            success: false,
+            error: err.message 
+        }), {
             status: 500,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
