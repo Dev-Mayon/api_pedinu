@@ -137,8 +137,6 @@ const PublicDigitalMenu = () => {
     return <DigitalMenuError theme="light" message={error || "Erro ao carregar cardápio"} onRetry={refetch} />;
   }
   
-  const primaryColorClass = 'red';
-
   return (
     <div className="min-h-screen bg-gray-50 text-gray-800">
       <DigitalMenuContainer
@@ -217,7 +215,9 @@ const PublicDigitalMenu = () => {
         onIdentified={onIdentified}
       />
 
-      {isCheckoutOpen && (
+      {/* ✅✅✅ CORREÇÃO FINAL APLICADA AQUI ✅✅✅ */}
+      {/* Renderiza o Modal SÓ SE a busca de dados terminou E o businessData tem o slug */}
+      {isCheckoutOpen && !loading && businessData?.business_slug && (
         <CheckoutModal
           isOpen={isCheckoutOpen}
           onClose={() => setIsCheckoutOpen(false)}
