@@ -82,7 +82,19 @@ Deno.serve(async (req) => {
         }
         const totalAmount = itemsForMp.reduce((sum, i) => sum + i.unit_price * i.quantity, 0);
 
-        // 4. Cria um objeto limpo para o banco de dados
+        // 4. ✅ CORREÇÃO: Mapear corretamente os valores do enum do banco
+        // Baseado no erro anterior, os valores aceitos são diferentes
+        const mapPaymentMethodToDb = (method) => {
+            const mapping = {
+                'pix': 'pix',
+                'credit_card': 'online', // ou outro valor que funcione
+                'debit_card': 'debit_card',
+                'cash': 'cash'
+            };
+            return mapping[method] || 'pix'; // fallback para pix
+        };
+
+        // Cria um objeto limpo para o banco de dados
         const orderForDb = {
             user_id: userId,
             customer_name: customerDetails.name,
@@ -91,7 +103,8 @@ Deno.serve(async (req) => {
             delivery_address: `${customerDetails.address}, ${customerDetails.neighborhood}`,
             items: cart,
             total: totalAmount,
-            payment_method: paymentMethod === 'pix' ? 'pix' : 'credit_card',
+            // ✅ CORREÇÃO: Usar o mapeamento correto
+            payment_method: mapPaymentMethodToDb(paymentMethod),
             order_type: deliveryFee > 0 ? 'delivery' : 'pickup',
             status: 'received',
             payment_status: 'pending',
