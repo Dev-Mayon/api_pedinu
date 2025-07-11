@@ -32,7 +32,7 @@ const useCatalogData = (businessSlug, toast) => {
       }
 
       const businessInfo = catalogData[0];
-      
+
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('id')
@@ -65,12 +65,11 @@ const useCatalogData = (businessSlug, toast) => {
         ...category,
         products: products.filter(product => product.category_id === category.id)
       }));
-
-      // AQUI É ONDE O ID DO NEGÓCIO É ADICIONADO!
+      // AQUI É ONDE O ID DO NEGÓCIO E O SLUG SÃO ADICIONADOS CORRETAMENTE!
       const formattedBusinessData = {
-        id: userId, // <-- LINHA ADICIONADA/CORRIGIDA!
+        id: userId,
         businessName: businessInfo.business_name,
-        businessSlug: businessInfo.business_slug,
+        businessSlug: businessSlug, // ✅✅✅ CORREÇÃO FINAL ✅✅✅
         categories: categoriesWithProducts,
         products: products,
         addonGroups: addonGroups,
@@ -100,7 +99,7 @@ const useCatalogData = (businessSlug, toast) => {
     } catch (err) {
       console.error('Erro ao carregar dados do catálogo:', err);
       setError(err.message || 'Erro ao carregar dados');
-      
+
       if (toast) {
         toast({
           title: "Erro ao carregar cardápio",
