@@ -25,7 +25,13 @@ Deno.serve(async (req) => {
         ensure(body.cart, 'cart');
         ensure(body.customerDetails, 'customerDetails');
 
-        const { businessSlug, cart, customerDetails, deliveryFee = 0 } = body;
+        const { 
+            businessSlug, 
+            cart, 
+            customerDetails, 
+            deliveryFee = 0,
+            paymentMethod = 'credit_card' // Novo parâmetro para determinar o tipo de pagamento
+        } = body;
 
         const supabase = createClient(
             Deno.env.get('SUPABASE_URL'),
@@ -76,7 +82,7 @@ Deno.serve(async (req) => {
         }
         const totalAmount = itemsForMp.reduce((sum, i) => sum + i.unit_price * i.quantity, 0);
 
-        // 4. Cria um objeto limpo para o banco de dados com os valores CORRIGIDOS
+        // 4. Cria um objeto limpo para o banco de dados
         const orderForDb = {
             user_id: userId,
             customer_name: customerDetails.name,
@@ -85,10 +91,8 @@ Deno.serve(async (req) => {
             delivery_address: `${customerDetails.address}, ${customerDetails.neighborhood}`,
             items: cart,
             total: totalAmount,
-            // ✅ CORREÇÃO: Usando 'pix', um valor que sabemos que existe no seu enum, em vez de 'online'
-            payment_method: 'pix',
+            payment_method: paymentMethod === 'pix' ? 'pix' : 'credit_card',
             order_type: deliveryFee > 0 ? 'delivery' : 'pickup',
-            // ✅ CORREÇÃO: Usando 'received', um valor que sabemos que existe no seu enum, em vez de 'pending_payment'
             status: 'received',
             payment_status: 'pending',
         };
@@ -106,36 +110,99 @@ Deno.serve(async (req) => {
         }
         const internalOrderId = newOrder.id;
 
-        // 6. Prepara e cria a preferência de pagamento
-        const preferenceBody = {
-            items: itemsForMp,
-            payer: { name: customerDetails.name, email: customerDetails.email },
-            back_urls: {
-                success: `${Deno.env.get('SITE_URL')}/payment-status`,
-                failure: `${Deno.env.get('SITE_URL')}/payment-status`,
-                pending: `${Deno.env.get('SITE_URL')}/payment-status`,
-            },
-            auto_return: 'approved',
-            external_reference: String(internalOrderId),
-            notification_url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/mercadopago-webhook?order_id=${internalOrderId}`,
-        };
+        // 6. FLUXO DIFERENCIADO: PIX vs CARTÃO
+        if (paymentMethod === 'pix') {
+            // ✅ FLUXO PIX: Cria pagamento PIX direto
+            const pixPaymentBody = {
+                transaction_amount: totalAmount,
+                description: `Pedido #${internalOrderId} - ${businessSlug}`,
+                payment_method_id: 'pix',
+                payer: {
+                    email: customerDetails.email,
+                    first_name: customerDetails.name.split(' ')[0],
+                    last_name: customerDetails.name.split(' ').slice(1).join(' ') || customerDetails.name.split(' ')[0],
+                    identification: {
+                        type: 'CPF',
+                        number: '00000000000' // Placeholder - PIX não exige CPF obrigatório
+                    }
+                },
+                external_reference: String(internalOrderId),
+                notification_url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/mercadopago-webhook?order_id=${internalOrderId}`,
+            };
 
-        const mpResponse = await fetch('https://api.mercadopago.com/checkout/preferences', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify(preferenceBody),
-        });
+            const pixResponse = await fetch('https://api.mercadopago.com/v1/payments', {
+                method: 'POST',
+                headers: { 
+                    'Authorization': `Bearer ${accessToken}`, 
+                    'Content-Type': 'application/json',
+                    'X-Idempotency-Key': `pix-${internalOrderId}-${Date.now()}`
+                },
+                body: JSON.stringify(pixPaymentBody),
+            });
 
-        const preference = await mpResponse.json();
-        if (!mpResponse.ok) throw new Error(`Erro ao criar preferência no MP: ${preference.message}`);
+            const pixPayment = await pixResponse.json();
+            if (!pixResponse.ok) {
+                console.error('Erro ao criar pagamento PIX:', pixPayment);
+                throw new Error(`Erro ao criar pagamento PIX: ${pixPayment.message || 'Erro desconhecido'}`);
+            }
 
-        await supabase.from('kitchen_orders').update({ mercadopago_preference_id: preference.id }).eq('id', internalOrderId);
+            // Atualiza o pedido com o ID do pagamento PIX
+            await supabase
+                .from('kitchen_orders')
+                .update({ mercadopago_payment_id: pixPayment.id })
+                .eq('id', internalOrderId);
 
-        return new Response(JSON.stringify({ preferenceId: preference.id }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+            // Retorna dados do PIX para o frontend
+            return new Response(JSON.stringify({
+                paymentType: 'pix',
+                paymentId: pixPayment.id,
+                qrCode: pixPayment.point_of_interaction?.transaction_data?.qr_code,
+                qrCodeBase64: pixPayment.point_of_interaction?.transaction_data?.qr_code_base64,
+                orderId: internalOrderId,
+                totalAmount: totalAmount
+            }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+
+        } else {
+            // ✅ FLUXO CARTÃO: Mantém o comportamento atual (preferência)
+            const preferenceBody = {
+                items: itemsForMp,
+                payer: { name: customerDetails.name, email: customerDetails.email },
+                back_urls: {
+                    success: `${Deno.env.get('SITE_URL')}/payment-status`,
+                    failure: `${Deno.env.get('SITE_URL')}/payment-status`,
+                    pending: `${Deno.env.get('SITE_URL')}/payment-status`,
+                },
+                auto_return: 'approved',
+                external_reference: String(internalOrderId),
+                notification_url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/mercadopago-webhook?order_id=${internalOrderId}`,
+            };
+
+            const mpResponse = await fetch('https://api.mercadopago.com/checkout/preferences', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(preferenceBody),
+            });
+
+            const preference = await mpResponse.json();
+            if (!mpResponse.ok) throw new Error(`Erro ao criar preferência no MP: ${preference.message}`);
+
+            await supabase
+                .from('kitchen_orders')
+                .update({ mercadopago_preference_id: preference.id })
+                .eq('id', internalOrderId);
+
+            return new Response(JSON.stringify({ 
+                paymentType: 'preference',
+                preferenceId: preference.id 
+            }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+        }
 
     } catch (err) {
+        console.error('Erro na Edge Function:', err);
         return new Response(JSON.stringify({ error: err.message }), {
             status: 500,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
