@@ -112,12 +112,18 @@ const CheckoutModal = ({
       }
     }
     if (!customerData.paymentMethod) newErrors.paymentMethod = 'Forma de pagamento é obrigatória';
-    if (customerData.paymentMethod === 'Dinheiro' && customerData.changeFor) {
-      const changeValue = parseFloat(customerData.changeFor);
-      if (isNaN(changeValue) || changeValue < finalTotal) {
-        newErrors.changeFor = `O valor deve ser igual ou maior que ${formatPrice(finalTotal)}.`;
+    
+    // ✅ CORREÇÃO: Validação mais flexível para dinheiro
+    if (customerData.paymentMethod === 'Dinheiro') {
+      if (customerData.changeFor && customerData.changeFor.trim()) {
+        const changeValue = parseFloat(customerData.changeFor);
+        if (isNaN(changeValue) || changeValue < finalTotal) {
+          newErrors.changeFor = `O valor deve ser igual ou maior que ${formatPrice(finalTotal)}.`;
+        }
       }
+      // Se não preencheu troco, não é erro - pode pagar exato
     }
+    
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -185,12 +191,12 @@ const CheckoutModal = ({
         console.warn("⚠️ Falha ao salvar endereço (IGNORADA):", addressError);
       }
 
-      // ✅ CORREÇÃO CRÍTICA: Mapear todos para valores aceitos pelo banco
+      // ✅ Mapeamento correto para o banco
       const mappedPaymentMethod = {
         'Pix': 'pix',
-        'Cartão de Crédito': 'pix', // ✅ Mapear para 'pix' que funciona
+        'Cartão de Crédito': 'pix',
         'Dinheiro': 'cash',
-        'Cartão de Débito': 'pix'   // ✅ Mapear para 'pix' que funciona
+        'Cartão de Débito': 'pix'
       }[customerData.paymentMethod] || 'pix';
 
       const orderItems = cart.map(item => ({
@@ -204,13 +210,16 @@ const CheckoutModal = ({
         }))
       }));
 
-      const changeAmount = customerData.paymentMethod === 'Dinheiro' && customerData.changeFor
+      // ✅ CORREÇÃO: Troco pode ser null se não preenchido
+      const changeAmount = customerData.paymentMethod === 'Dinheiro' && customerData.changeFor && customerData.changeFor.trim()
           ? parseFloat(customerData.changeFor) : null;
       const changeDue = changeAmount ? changeAmount - finalTotal : null;
 
       let notes = customerData.notes || '';
       if (changeDue !== null && changeDue >= 0) {
-        notes = `${notes} | Troco para ${formatPrice(changeDue)} (devolver ${formatPrice(changeDue)})`.trim();
+        notes = `${notes} | Troco para ${formatPrice(changeAmount)} (devolver ${formatPrice(changeDue)})`.trim();
+      } else if (customerData.paymentMethod === 'Dinheiro' && !changeAmount) {
+        notes = `${notes} | Pagamento exato`.trim();
       }
 
       const { data: newOrder, error: orderError } = await supabase
@@ -229,7 +238,8 @@ const CheckoutModal = ({
           order_type: orderType,
           status: 'received',
           payment_status: 'pending',
-          change_for: changeAmount
+          change_for: changeAmount,
+          notes: notes
         })
         .select('id')
         .single();
@@ -298,7 +308,7 @@ const CheckoutModal = ({
           setIsSubmitting(false);
         }
       } else {
-        // ✅ Todos os outros métodos são "pagamento na entrega"
+        // ✅ CORREÇÃO: Todos os outros métodos são "pagamento na entrega" SEM redirecionamento
         await supabase
           .from('kitchen_orders')
           .update({ status: 'received', payment_status: 'paid_on_delivery' })
@@ -306,10 +316,15 @@ const CheckoutModal = ({
 
         toast({
           title: "Pedido Recebido!",
-          description: `Seu pedido foi registrado. Pague ${customerData.paymentMethod.toLowerCase()} na entrega.`
+          description: `Pedido #${newOrderId} registrado. Pague ${customerData.paymentMethod.toLowerCase()} na entrega.`,
+          duration: 5000
         });
-        onOrderSuccess(newOrderId);
-        setIsSubmitting(false);
+        
+        // ✅ CORREÇÃO: Fechar modal em vez de redirecionar
+        setTimeout(() => {
+          onClose();
+          setIsSubmitting(false);
+        }, 2000);
       }
     } catch (error) {
       console.error('🔥 Principal catch acionado em handleDetailsSubmit:', error);
@@ -465,3 +480,4 @@ const CheckoutModal = ({
 };
 
 export default CheckoutModal;
+
