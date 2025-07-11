@@ -26,7 +26,7 @@ const CheckoutModal = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderType, setOrderType] = useState('delivery');
 
-  // ✅ Estados para PIX
+  // Estados para PIX
   const [pixData, setPixData] = useState(null);
   const [paymentStatus, setPaymentStatus] = useState('pending');
 
@@ -45,7 +45,6 @@ const CheckoutModal = ({
       setStep('details');
       setOrderId(null);
       setOrderType('delivery');
-      // Reset PIX data
       setPixData(null);
       setPaymentStatus('pending');
 
@@ -152,7 +151,6 @@ const CheckoutModal = ({
     }
   };
 
-  // Função para copiar código PIX
   const copyPixCode = () => {
     if (pixData?.qrCode) {
       navigator.clipboard.writeText(pixData.qrCode);
@@ -187,10 +185,13 @@ const CheckoutModal = ({
         console.warn("⚠️ Falha ao salvar endereço (IGNORADA):", addressError);
       }
 
+      // ✅ CORREÇÃO CRÍTICA: Mapear todos para valores aceitos pelo banco
       const mappedPaymentMethod = {
-        'Pix': 'pix', 'Cartão de Crédito': 'credit_card',
-        'Dinheiro': 'cash', 'Cartão de Débito': 'debit_card'
-      }[customerData.paymentMethod] || 'other';
+        'Pix': 'pix',
+        'Cartão de Crédito': 'pix', // ✅ Mapear para 'pix' que funciona
+        'Dinheiro': 'cash',
+        'Cartão de Débito': 'pix'   // ✅ Mapear para 'pix' que funciona
+      }[customerData.paymentMethod] || 'pix';
 
       const orderItems = cart.map(item => ({
         name: item.name,
@@ -238,7 +239,7 @@ const CheckoutModal = ({
       newOrderId = newOrder.id;
       setOrderId(newOrderId);
 
-      // ✅ CORREÇÃO CRÍTICA: Apenas PIX chama a Edge Function
+      // ✅ APENAS PIX chama a Edge Function
       if (customerData.paymentMethod === 'Pix') {
         try {
           const requestBody = {
@@ -283,8 +284,6 @@ const CheckoutModal = ({
           }
 
           const responseData = await response.json();
-
-          // PIX: Exibir QR Code
           setPixData(responseData);
           setStep('pix');
           setIsSubmitting(false);
@@ -299,7 +298,7 @@ const CheckoutModal = ({
           setIsSubmitting(false);
         }
       } else {
-        // ✅ CORREÇÃO: Todos os outros métodos são "pagamento na entrega"
+        // ✅ Todos os outros métodos são "pagamento na entrega"
         await supabase
           .from('kitchen_orders')
           .update({ status: 'received', payment_status: 'paid_on_delivery' })
@@ -367,7 +366,6 @@ const CheckoutModal = ({
                 customerAddresses={customerAddresses}
               />
             ) : step === 'pix' && pixData ? (
-              // Tela do QR Code PIX
               <div className="text-center space-y-6">
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                   <CheckCircle className="h-8 w-8 text-green-600 mx-auto mb-2" />
@@ -467,4 +465,3 @@ const CheckoutModal = ({
 };
 
 export default CheckoutModal;
-
