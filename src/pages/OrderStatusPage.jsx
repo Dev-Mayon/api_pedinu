@@ -68,9 +68,12 @@ const OrderStatusPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // LOG DE DEPURAÇÃO ADICIONADO AQUI
   const fetchOrder = useCallback(async () => {
     setLoading(true);
     setError(null);
+    console.log("===> Buscando pedido, orderId:", orderId);
+
     try {
       const { data, error: fetchError } = await supabase
         .from('kitchen_orders')
@@ -80,11 +83,14 @@ const OrderStatusPage = () => {
         `)
         .eq('id', orderId)
         .single();
-      
+
+      // LOG DO RESULTADO DA CONSULTA
+      console.log("===> Resultado do fetch:", { data, fetchError });
+
       if (fetchError || !data) {
         throw new Error("Pedido não encontrado ou ocorreu um erro.");
       }
-      
+
       setOrder(data);
       if (data.profile && data.profile.business_slug) {
         setBusinessSlug(data.profile.business_slug);
@@ -100,7 +106,7 @@ const OrderStatusPage = () => {
   useEffect(() => {
     fetchOrder();
   }, [fetchOrder]);
-  
+
   useEffect(() => {
     const channel = supabase
       .channel(`kitchen_orders:id=eq.${orderId}`)
@@ -114,7 +120,7 @@ const OrderStatusPage = () => {
         setOrder(payload.new);
       })
       .subscribe();
-      
+
     return () => {
       supabase.removeChannel(channel);
     };
@@ -183,7 +189,7 @@ const OrderStatusPage = () => {
                 </div>
               </div>
             )}
-            
+
             <div className="bg-white p-4 rounded-lg border border-gray-200 mb-6">
               <h3 className="font-bold text-lg mb-2 text-gray-800">Detalhes do Pedido</h3>
               <AnimatePresence>
@@ -207,7 +213,7 @@ const OrderStatusPage = () => {
                 </motion.div>
               </AnimatePresence>
             </div>
-            
+
             <div className="flex flex-col sm:flex-row gap-3">
               {businessSlug && (
                 <Button asChild className="flex-1 bg-red-600 hover:bg-red-700">
