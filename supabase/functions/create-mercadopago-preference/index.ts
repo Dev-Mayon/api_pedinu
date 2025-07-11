@@ -25,7 +25,13 @@ Deno.serve(async (req) => {
         ensure(body.cart, 'cart');
         ensure(body.customerDetails, 'customerDetails');
 
-        const { businessSlug, cart, customerDetails, deliveryFee = 0 } = body;
+        const { 
+            businessSlug, 
+            cart, 
+            customerDetails, 
+            deliveryFee = 0,
+            paymentMethod = 'Pix' // ✅ NOVO: Recebe método de pagamento
+        } = body;
 
         const supabase = createClient(
             Deno.env.get('SUPABASE_URL'),
@@ -44,19 +50,7 @@ Deno.serve(async (req) => {
         }
         const userId = profile.id;
 
-        // 2. Busca as credenciais de pagamento
-        const { data: paymentSettings } = await supabase
-            .from('payment_settings')
-            .select('mercadopago_access_token')
-            .eq('user_id', userId)
-            .single();
-
-        if (!paymentSettings?.mercadopago_access_token) {
-            throw new Error('Credenciais do Mercado Pago não configuradas.');
-        }
-        const accessToken = paymentSettings.mercadopago_access_token;
-
-        // 3. Prepara os itens para o Mercado Pago e calcula o total
+        // 2. Prepara os itens e calcula o total
         const itemsForMp = cart.map((item) => ({
             id: item.id,
             title: item.name,
@@ -76,7 +70,7 @@ Deno.serve(async (req) => {
         }
         const totalAmount = itemsForMp.reduce((sum, i) => sum + i.unit_price * i.quantity, 0);
 
-        // 4. Cria um objeto limpo para o banco de dados com os valores CORRIGIDOS
+        // 3. Cria o pedido no banco (SEMPRE)
         const orderForDb = {
             user_id: userId,
             customer_name: customerDetails.name,
@@ -85,15 +79,12 @@ Deno.serve(async (req) => {
             delivery_address: `${customerDetails.address}, ${customerDetails.neighborhood}`,
             items: cart,
             total: totalAmount,
-            // ✅ CORREÇÃO: Usando 'pix', um valor que sabemos que existe no seu enum, em vez de 'online'
-            payment_method: 'pix',
+            payment_method: 'pix', // ✅ Sempre 'pix' para evitar erro de enum
             order_type: deliveryFee > 0 ? 'delivery' : 'pickup',
-            // ✅ CORREÇÃO: Usando 'received', um valor que sabemos que existe no seu enum, em vez de 'pending_payment'
             status: 'received',
-            payment_status: 'pending',
+            payment_status: paymentMethod === 'Pix' ? 'pending' : 'paid_on_delivery', // ✅ DIFERENCIAÇÃO
         };
 
-        // 5. Insere o pedido no banco de dados
         const { data: newOrder, error: orderError } = await supabase
             .from('kitchen_orders')
             .insert(orderForDb)
@@ -106,52 +97,79 @@ Deno.serve(async (req) => {
         }
         const internalOrderId = newOrder.id;
 
-        // 6. ✅ NOVA FUNCIONALIDADE: Cria pagamento PIX em vez de preferência
-        const pixPaymentBody = {
-            transaction_amount: totalAmount,
-            description: `Pedido #${internalOrderId} - ${businessSlug}`,
-            payment_method_id: 'pix',
-            payer: {
-                email: customerDetails.email,
-                first_name: customerDetails.name.split(' ')[0],
-                last_name: customerDetails.name.split(' ').slice(1).join(' ') || customerDetails.name.split(' ')[0],
-                identification: {
-                    type: 'CPF',
-                    number: '00000000000' // Placeholder - PIX não exige CPF obrigatório
-                }
-            },
-            external_reference: String(internalOrderId),
-            notification_url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/mercadopago-webhook?order_id=${internalOrderId}`,
-        };
+        // ✅ LÓGICA CONDICIONAL: Apenas PIX gera QR Code
+        if (paymentMethod === 'Pix') {
+            // 4. Busca as credenciais de pagamento (apenas para PIX)
+            const { data: paymentSettings } = await supabase
+                .from('payment_settings')
+                .select('mercadopago_access_token')
+                .eq('user_id', userId)
+                .single();
 
-        const pixResponse = await fetch('https://api.mercadopago.com/v1/payments', {
-            method: 'POST',
-            headers: { 
-                'Authorization': `Bearer ${accessToken}`, 
-                'Content-Type': 'application/json',
-                'X-Idempotency-Key': `pix-${internalOrderId}-${Date.now()}`
-            },
-            body: JSON.stringify(pixPaymentBody),
-        });
+            if (!paymentSettings?.mercadopago_access_token) {
+                throw new Error('Credenciais do Mercado Pago não configuradas.');
+            }
+            const accessToken = paymentSettings.mercadopago_access_token;
 
-        const pixPayment = await pixResponse.json();
-        if (!pixResponse.ok) {
-            console.error('Erro ao criar pagamento PIX:', pixPayment);
-            throw new Error(`Erro ao criar pagamento PIX: ${pixPayment.message || 'Erro desconhecido'}`);
+            // 5. Cria pagamento PIX
+            const pixPaymentBody = {
+                transaction_amount: totalAmount,
+                description: `Pedido #${internalOrderId} - ${businessSlug}`,
+                payment_method_id: 'pix',
+                payer: {
+                    email: customerDetails.email,
+                    first_name: customerDetails.name.split(' ')[0],
+                    last_name: customerDetails.name.split(' ').slice(1).join(' ') || customerDetails.name.split(' ')[0],
+                    identification: {
+                        type: 'CPF',
+                        number: '00000000000'
+                    }
+                },
+                external_reference: String(internalOrderId),
+                notification_url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/mercadopago-webhook?order_id=${internalOrderId}`,
+            };
+
+            const pixResponse = await fetch('https://api.mercadopago.com/v1/payments', {
+                method: 'POST',
+                headers: { 
+                    'Authorization': `Bearer ${accessToken}`, 
+                    'Content-Type': 'application/json',
+                    'X-Idempotency-Key': `pix-${internalOrderId}-${Date.now()}`
+                },
+                body: JSON.stringify(pixPaymentBody),
+            });
+
+            const pixPayment = await pixResponse.json();
+            if (!pixResponse.ok) {
+                console.error('Erro ao criar pagamento PIX:', pixPayment);
+                throw new Error(`Erro ao criar pagamento PIX: ${pixPayment.message || 'Erro desconhecido'}`);
+            }
+
+            await supabase.from('kitchen_orders').update({ mercadopago_payment_id: pixPayment.id }).eq('id', internalOrderId);
+
+            // ✅ RETORNA DADOS DO PIX
+            return new Response(JSON.stringify({ 
+                paymentType: 'pix',
+                paymentId: pixPayment.id,
+                qrCode: pixPayment.point_of_interaction?.transaction_data?.qr_code,
+                qrCodeBase64: pixPayment.point_of_interaction?.transaction_data?.qr_code_base64,
+                orderId: internalOrderId,
+                totalAmount: totalAmount
+            }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+
+        } else {
+            // ✅ OUTROS MÉTODOS: Apenas confirmação (sem QR Code)
+            return new Response(JSON.stringify({ 
+                paymentType: 'delivery',
+                orderId: internalOrderId,
+                totalAmount: totalAmount,
+                message: `Pedido registrado. Pague ${paymentMethod.toLowerCase()} na entrega.`
+            }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
         }
-
-        await supabase.from('kitchen_orders').update({ mercadopago_payment_id: pixPayment.id }).eq('id', internalOrderId);
-
-        // ✅ RETORNA DADOS DO PIX em vez de preferenceId
-        return new Response(JSON.stringify({ 
-            paymentType: 'pix',
-            paymentId: pixPayment.id,
-            qrCode: pixPayment.point_of_interaction?.transaction_data?.qr_code,
-            qrCodeBase64: pixPayment.point_of_interaction?.transaction_data?.qr_code_base64,
-            orderId: internalOrderId
-        }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
 
     } catch (err) {
         return new Response(JSON.stringify({ error: err.message }), {
