@@ -146,6 +146,7 @@ const CheckoutModal = ({
   };
 
   const handleDetailsSubmit = async () => {
+    console.log('--- EXECUTANDO VERSÃO FINAL DEPLOY MEIA-NOITE ---');
     if (!validateForm()) {
       if (!customerData.paymentMethod) {
         setCustomerData(prev => ({ ...prev, paymentMethod: '' }));
