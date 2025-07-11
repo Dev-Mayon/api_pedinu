@@ -504,5 +504,6 @@ const CheckoutModal = ({
   );
 };
 
+//versao final
 export default CheckoutModal;
 
