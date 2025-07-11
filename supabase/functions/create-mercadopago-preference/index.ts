@@ -76,18 +76,20 @@ Deno.serve(async (req) => {
         }
         const totalAmount = itemsForMp.reduce((sum, i) => sum + i.unit_price * i.quantity, 0);
 
-        // 4. Cria um objeto limpo para o banco de dados
+        // 4. Cria um objeto limpo para o banco de dados com os valores CORRIGIDOS
         const orderForDb = {
             user_id: userId,
             customer_name: customerDetails.name,
             customer_phone: customerDetails.phone,
             customer_email: customerDetails.email,
             delivery_address: `${customerDetails.address}, ${customerDetails.neighborhood}`,
-            items: cart, // O 'cart' original do request
+            items: cart,
             total: totalAmount,
-            payment_method: 'online',
+            // ✅ CORREÇÃO: Usando 'pix', um valor que sabemos que existe no seu enum, em vez de 'online'
+            payment_method: 'pix',
             order_type: deliveryFee > 0 ? 'delivery' : 'pickup',
-            status: 'pending_payment',
+            // ✅ CORREÇÃO: Usando 'received', um valor que sabemos que existe no seu enum, em vez de 'pending_payment'
+            status: 'received',
             payment_status: 'pending',
         };
 
