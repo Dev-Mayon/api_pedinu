@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  X, CreditCard, ShoppingCart, ArrowLeft, Loader2
+  X, CreditCard, ShoppingCart, ArrowLeft, Loader2, Copy, CheckCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatPrice } from '@/lib/utils';
@@ -26,6 +26,10 @@ const CheckoutModal = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderType, setOrderType] = useState('delivery');
 
+  // ✅ NOVO: Estados para PIX
+  const [pixData, setPixData] = useState(null);
+  const [paymentStatus, setPaymentStatus] = useState('pending');
+
   const [customerData, setCustomerData] = useState({
     name: '', phone: '', email: '', neighborhood: '', address: '',
     paymentMethod: '', notes: '', changeFor: '', saveAddress: true,
@@ -41,6 +45,9 @@ const CheckoutModal = ({
       setStep('details');
       setOrderId(null);
       setOrderType('delivery');
+      // ✅ NOVO: Reset PIX data
+      setPixData(null);
+      setPaymentStatus('pending');
 
       const defaultAddress = selectedAddress || customerAddresses.find(a => a.is_default);
 
@@ -145,6 +152,17 @@ const CheckoutModal = ({
     }
   };
 
+  // ✅ NOVO: Função para copiar código PIX
+  const copyPixCode = () => {
+    if (pixData?.qrCode) {
+      navigator.clipboard.writeText(pixData.qrCode);
+      toast({
+        title: "Código PIX copiado!",
+        description: "Cole no seu app de pagamentos para finalizar.",
+      });
+    }
+  };
+
   const handleDetailsSubmit = async () => {
     console.log('--- EXECUTANDO VERSÃO FINAL DEPLOY MEIA-NOITE ---');
     if (!validateForm()) {
@@ -233,9 +251,7 @@ const CheckoutModal = ({
         onOrderSuccess(newOrderId);
       } else if (['Pix', 'Cartão de Crédito'].includes(customerData.paymentMethod)) {
         try {
-          // ✅ CORREÇÃO CRÍTICA: Garantir que o businessSlug seja enviado corretamente
           const requestBody = {
-            // Prioriza businessSlug, depois slug, depois business_slug como fallback
             businessSlug: businessData.businessSlug || businessData.slug || businessData.business_slug,
             cart: cart.map(item => ({
               id: item.id,
@@ -253,11 +269,8 @@ const CheckoutModal = ({
             deliveryFee: deliveryFee,
           };
 
-          // ✅ DEBUG: Verificar se o businessSlug está presente antes do envio
           console.log('--- DADOS FINAIS PRESTES A ENVIAR ---', JSON.stringify(requestBody, null, 2));
-          console.log('--- BUSINESS DATA COMPLETO ---', businessData);
 
-          // ✅ VALIDAÇÃO ADICIONAL: Verificar se o businessSlug existe
           if (!requestBody.businessSlug) {
             throw new Error('Business slug não encontrado. Verifique se os dados do negócio foram carregados corretamente.');
           }
@@ -275,14 +288,23 @@ const CheckoutModal = ({
 
           if (!response.ok) {
             const errorData = await response.json();
-            // Acessa a mensagem de erro detalhada que a nossa Edge Function melhorada envia
             const detailedError = errorData.error || 'Erro ao criar preferência de pagamento.';
             throw new Error(detailedError);
           }
 
-          const { preferenceId } = await response.json();
-          const redirectUrl = `https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=${preferenceId}`;
-          window.location.href = redirectUrl;
+          const responseData = await response.json();
+
+          // ✅ NOVO: Detectar se é PIX ou cartão baseado na resposta
+          if (responseData.paymentType === 'pix') {
+            // PIX: Exibir QR Code
+            setPixData(responseData);
+            setStep('pix');
+            setIsSubmitting(false);
+          } else {
+            // Cartão: Redirecionar (comportamento original)
+            const redirectUrl = `https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=${responseData.preferenceId}`;
+            window.location.href = redirectUrl;
+          }
 
         } catch (mpError) {
           console.error('🔥 Erro ao chamar Edge Function do Mercado Pago:', mpError);
@@ -326,7 +348,9 @@ const CheckoutModal = ({
             <div className="flex items-center space-x-3">
               <ShoppingCart className="h-6 w-6" />
               <div>
-                <h2 className="text-2xl font-bold">Finalizar Pedido</h2>
+                <h2 className="text-2xl font-bold">
+                  {step === 'pix' ? 'Pagamento PIX' : 'Finalizar Pedido'}
+                </h2>
                 <p className="text-red-100">{businessData.businessName}</p>
               </div>
             </div>
@@ -336,37 +360,112 @@ const CheckoutModal = ({
           </div>
 
           <div className="p-6 overflow-y-auto flex-grow">
-            <CheckoutUserDetails
-              customerData={customerData}
-              setCustomerData={setCustomerData}
-              errors={errors}
-              setErrors={setErrors}
-              orderType={orderType}
-              setOrderType={setOrderType}
-              deliveryZones={deliveryZones}
-              setDeliveryFee={setDeliveryFee}
-              finalTotal={finalTotal}
-              customerAddresses={customerAddresses}
-            />
+            {step === 'details' ? (
+              <CheckoutUserDetails
+                customerData={customerData}
+                setCustomerData={setCustomerData}
+                errors={errors}
+                setErrors={setErrors}
+                orderType={orderType}
+                setOrderType={setOrderType}
+                deliveryZones={deliveryZones}
+                setDeliveryFee={setDeliveryFee}
+                finalTotal={finalTotal}
+                customerAddresses={customerAddresses}
+              />
+            ) : step === 'pix' && pixData ? (
+              // ✅ NOVO: Tela do QR Code PIX
+              <div className="text-center space-y-6">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <CheckCircle className="h-8 w-8 text-green-600 mx-auto mb-2" />
+                  <h3 className="text-lg font-semibold text-green-800">Pedido Criado!</h3>
+                  <p className="text-green-700">Pedido #{pixData.orderId}</p>
+                </div>
+
+                <div className="bg-gray-50 rounded-lg p-6">
+                  <h4 className="text-lg font-semibold mb-4">Escaneie o QR Code para pagar</h4>
+                  
+                  {pixData.qrCodeBase64 && (
+                    <div className="bg-white p-4 rounded-lg inline-block mb-4">
+                      <img 
+                        src={`data:image/png;base64,${pixData.qrCodeBase64}`}
+                        alt="QR Code PIX"
+                        className="w-48 h-48 mx-auto"
+                      />
+                    </div>
+                  )}
+
+                  <p className="text-sm text-gray-600 mb-4">
+                    Ou copie o código PIX abaixo:
+                  </p>
+
+                  <div className="bg-white border rounded-lg p-3 mb-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-mono text-gray-800 break-all">
+                        {pixData.qrCode?.substring(0, 50)}...
+                      </span>
+                      <Button
+                        onClick={copyPixCode}
+                        variant="outline"
+                        size="sm"
+                        className="ml-2 flex-shrink-0"
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-green-600 mb-2">
+                      {formatPrice(pixData.totalAmount)}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      Aguardando confirmação do pagamento...
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="bg-gray-50 border-t p-6">
-            <CheckoutOrderSummary
-              total={total}
-              deliveryFee={deliveryFee}
-              finalTotal={finalTotal}
-              orderType={orderType}
-              paymentMethod={customerData.paymentMethod}
-              changeFor={customerData.changeFor}
-            />
-            <Button
-              type="button"
-              onClick={handleDetailsSubmit}
-              disabled={isSubmitting}
-              className="w-full bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-bold py-3 text-lg rounded-xl shadow-lg mt-4"
-            >
-              {isSubmitting ? <Loader2 className="animate-spin" /> : `Continuar para Pagamento - ${formatPrice(finalTotal)}`}
-            </Button>
+            {step === 'details' ? (
+              <>
+                <CheckoutOrderSummary
+                  total={total}
+                  deliveryFee={deliveryFee}
+                  finalTotal={finalTotal}
+                  orderType={orderType}
+                  paymentMethod={customerData.paymentMethod}
+                  changeFor={customerData.changeFor}
+                />
+                <Button
+                  type="button"
+                  onClick={handleDetailsSubmit}
+                  disabled={isSubmitting}
+                  className="w-full bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-bold py-3 text-lg rounded-xl shadow-lg mt-4"
+                >
+                  {isSubmitting ? <Loader2 className="animate-spin" /> : `Continuar para Pagamento - ${formatPrice(finalTotal)}`}
+                </Button>
+              </>
+            ) : step === 'pix' ? (
+              <div className="space-y-3">
+                <Button
+                  onClick={copyPixCode}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 text-lg rounded-xl"
+                >
+                  <Copy className="h-5 w-5 mr-2" />
+                  Copiar Código PIX
+                </Button>
+                <Button
+                  onClick={onClose}
+                  variant="outline"
+                  className="w-full py-3 text-lg rounded-xl"
+                >
+                  Fechar
+                </Button>
+              </div>
+            ) : null}
           </div>
         </motion.div>
       </motion.div>
