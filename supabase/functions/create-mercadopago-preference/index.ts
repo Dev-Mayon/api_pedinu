@@ -148,6 +148,8 @@ Deno.serve(async (req) => {
                 },
                 external_reference: String(internalOrderId),
                 notification_url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/mercadopago-webhook?order_id=${internalOrderId}`,
+                // === INCLUIR METADATA ABAIXO ===
+                metadata: { store_id: userId }
             };
 
             const pixResponse = await fetch('https://api.mercadopago.com/v1/payments', {
