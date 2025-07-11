@@ -68,35 +68,38 @@ const OrderStatusPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // LOG DE DEPURAÇÃO ADICIONADO AQUI
+  // CONSULTA SEM JOIN ANINHADO!
   const fetchOrder = useCallback(async () => {
     setLoading(true);
     setError(null);
-    console.log("===> Buscando pedido, orderId:", orderId);
-
     try {
-      const { data, error: fetchError } = await supabase
+      // 1. Busca o pedido normalmente
+      const { data: orderData, error: fetchError } = await supabase
         .from('kitchen_orders')
-        .select(`
-          *,
-          profile:profiles(business_slug)
-        `)
+        .select('*')
         .eq('id', orderId)
         .single();
 
-      // LOG DO RESULTADO DA CONSULTA
-      console.log("===> Resultado do fetch:", { data, fetchError });
-
-      if (fetchError || !data) {
+      if (fetchError || !orderData) {
         throw new Error("Pedido não encontrado ou ocorreu um erro.");
       }
 
-      setOrder(data);
-      if (data.profile && data.profile.business_slug) {
-        setBusinessSlug(data.profile.business_slug);
+      setOrder(orderData);
+
+      // 2. Busca o business_slug usando o user_id do pedido
+      if (orderData.user_id) {
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('business_slug')
+          .eq('id', orderData.user_id)
+          .single();
+
+        if (profileData && profileData.business_slug) {
+          setBusinessSlug(profileData.business_slug);
+        }
       }
+
     } catch (e) {
-      console.error(e);
       setError(e.message);
     } finally {
       setLoading(false);
@@ -108,23 +111,24 @@ const OrderStatusPage = () => {
   }, [fetchOrder]);
 
   useEffect(() => {
+    if (!order) return;
     const channel = supabase
       .channel(`kitchen_orders:id=eq.${orderId}`)
-      .on('postgres_changes', { 
-        event: 'UPDATE', 
-        schema: 'public', 
-        table: 'kitchen_orders', 
-        filter: `id=eq.${orderId}` 
-      }, 
-      (payload) => {
-        setOrder(payload.new);
-      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'kitchen_orders',
+        filter: `id=eq.${orderId}`
+      },
+        (payload) => {
+          setOrder(payload.new);
+        })
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [orderId]);
+  }, [orderId, order]);
 
   if (loading) return <LoadingScreen />;
   if (error) return <ErrorScreen message={error} onRetry={fetchOrder} />;
@@ -135,7 +139,7 @@ const OrderStatusPage = () => {
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4">
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
@@ -179,7 +183,7 @@ const OrderStatusPage = () => {
                     </div>
                   ))}
                 </div>
-                <div className="h-1 bg-gray-200 rounded-full mt-2 -translate-y-7" style={{zIndex: -1}}>
+                <div className="h-1 bg-gray-200 rounded-full mt-2 -translate-y-7" style={{ zIndex: -1 }}>
                   <motion.div
                     className="h-1 bg-green-500 rounded-full"
                     initial={{ width: '0%' }}
@@ -195,7 +199,7 @@ const OrderStatusPage = () => {
               <AnimatePresence>
                 <motion.div layout className="space-y-2">
                   {order.items.map((item, index) => (
-                    <motion.div 
+                    <motion.div
                       key={index}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -236,3 +240,4 @@ const OrderStatusPage = () => {
 };
 
 export default OrderStatusPage;
+
