@@ -10,7 +10,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { supabase } from '@/lib/customSupabaseClient';
 import CheckoutUserDetails from '@/components/public_catalog/checkout/CheckoutUserDetails';
 import CheckoutOrderSummary from '@/components/public_catalog/checkout/CheckoutOrderSummary';
-
+//versao final
 const CheckoutModal = ({
   isOpen,
   onClose,
