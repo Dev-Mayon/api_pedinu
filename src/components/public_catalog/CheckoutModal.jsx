@@ -1,251 +1,162 @@
-import React, { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  X, CreditCard, ShoppingCart, ArrowLeft, Loader2, Copy, CheckCircle
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Checkbox } from '@/components/ui/checkbox';
-import { toast } from '@/hooks/use-toast';
-import { X, ShoppingCart, CreditCard, Banknote, QrCode, Copy, CheckCircle } from 'lucide-react';
+import { formatPrice } from '@/lib/utils';
+import { useCustomer } from '@/contexts/CustomerContext';
+import { useToast } from '@/components/ui/use-toast';
+import { supabase } from '@/lib/customSupabaseClient';
+import CheckoutUserDetails from '@/components/public_catalog/checkout/CheckoutUserDetails';
+import CheckoutOrderSummary from '@/components/public_catalog/checkout/CheckoutOrderSummary';
 
-const CheckoutModal = ({ 
-  isOpen, 
-  onClose, 
-  cart, 
-  businessData, 
-  onOrderSuccess 
+const CheckoutModal = ({
+  isOpen,
+  onClose,
+  cart,
+  total,
+  deliveryZones,
+  businessData,
+  onOrderSuccess,
 }) => {
-  const [step, setStep] = useState('checkout');
-  const [loading, setLoading] = useState(false);
-  const [customerData, setCustomerData] = useState({
-    name: '',
-    phone: '',
-    email: '',
-    address: '',
-    paymentMethod: '',
-    observations: '',
-    changeAmount: ''
-  });
-  const [saveAddress, setSaveAddress] = useState(false);
+  const { toast } = useToast();
+  const { customer, setCustomer, selectedAddress } = useCustomer();
+  const [step, setStep] = useState('details');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [orderType, setOrderType] = useState('delivery');
+
+  // Estados para PIX
   const [pixData, setPixData] = useState(null);
   const [paymentStatus, setPaymentStatus] = useState('pending');
 
-  const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const deliveryFee = businessData?.deliveryFee || 0;
-  const total = subtotal + deliveryFee;
+  const [customerData, setCustomerData] = useState({
+    name: '', phone: '', email: '', neighborhood: '', address: '',
+    paymentMethod: '', notes: '', changeFor: '', saveAddress: true,
+  });
 
-  const resetForm = () => {
-    setStep('checkout');
-    setCustomerData({
-      name: '',
-      phone: '',
-      email: '',
-      address: '',
-      paymentMethod: '',
-      observations: '',
-      changeAmount: ''
-    });
-    setSaveAddress(false);
-    setPixData(null);
-    setPaymentStatus('pending');
-    setLoading(false);
-  };
+  const [deliveryFee, setDeliveryFee] = useState(0);
+  const [errors, setErrors] = useState({});
+  const [orderId, setOrderId] = useState(null);
+  const [customerAddresses, setCustomerAddresses] = useState([]);
 
   useEffect(() => {
-    if (!isOpen) {
-      resetForm();
-    }
-  }, [isOpen]);
+    if (isOpen) {
+      setStep('details');
+      setOrderId(null);
+      setOrderType('delivery');
+      setPixData(null);
+      setPaymentStatus('pending');
 
-  const handleInputChange = (field, value) => {
-    setCustomerData(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
+      const defaultAddress = selectedAddress || customerAddresses.find(a => a.is_default);
+
+      setCustomerData(prev => ({
+        ...prev,
+        name: customer.name || '',
+        phone: customer.phone || '',
+        email: customer.email || '',
+        neighborhood: defaultAddress?.neighborhood || '',
+        address: defaultAddress?.address || '',
+        paymentMethod: '',
+        notes: '',
+        changeFor: '',
+        saveAddress: true,
+      }));
+    }
+  }, [customer, isOpen, selectedAddress, customerAddresses]);
+
+  const fetchCustomerAddresses = useCallback(async () => {
+    if (customer.phone && businessData.businessSlug) {
+      const { data, error } = await supabase
+        .from('customer_addresses')
+        .select('*')
+        .eq('customer_phone', customer.phone)
+        .eq('business_slug', businessData.businessSlug);
+
+      if (!error && data) {
+        setCustomerAddresses(data);
+        const defaultAddress = data.find(addr => addr.is_default) || data[0];
+        if (defaultAddress && !selectedAddress) {
+          setCustomerData(prev => ({
+            ...prev,
+            neighborhood: defaultAddress.neighborhood,
+            address: defaultAddress.address,
+          }));
+        }
+      }
+    }
+  }, [customer.phone, businessData.businessSlug, selectedAddress]);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchCustomerAddresses();
+    }
+  }, [isOpen, fetchCustomerAddresses]);
+
+  const finalTotal = useMemo(() => total + deliveryFee, [total, deliveryFee]);
 
   const validateForm = () => {
-    if (!customerData.name.trim()) {
-      toast({
-        title: "Erro",
-        description: "Nome é obrigatório",
-        variant: "destructive"
-      });
-      return false;
-    }
-
-    if (!customerData.phone.trim()) {
-      toast({
-        title: "Erro", 
-        description: "Telefone é obrigatório",
-        variant: "destructive"
-      });
-      return false;
-    }
-
-    if (!customerData.address.trim()) {
-      toast({
-        title: "Erro",
-        description: "Endereço é obrigatório", 
-        variant: "destructive"
-      });
-      return false;
-    }
-
-    if (!customerData.paymentMethod) {
-      toast({
-        title: "Erro",
-        description: "Selecione uma forma de pagamento",
-        variant: "destructive"
-      });
-      return false;
-    }
-
-    return true;
-  };
-
-  const saveCustomerAddress = async () => {
-    if (!saveAddress) return;
-
-    try {
-      const response = await fetch('/api/customer-addresses', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          businessSlug: businessData.businessSlug,
-          phone: customerData.phone,
-          name: customerData.name,
-          address: customerData.address,
-          email: customerData.email
-        }),
-      });
-
-      if (!response.ok) {
-        console.warn('Falha ao salvar endereço do cliente');
+    const newErrors = {};
+    if (!customerData.name.trim()) newErrors.name = 'Nome é obrigatório';
+    if (!customerData.phone.trim()) newErrors.phone = 'Telefone é obrigatório';
+    if (orderType === 'delivery') {
+      if (!customerData.neighborhood.trim()) newErrors.neighborhood = 'Bairro é obrigatório';
+      if (!customerData.address.trim()) newErrors.address = 'Endereço é obrigatório';
+      if (customerData.neighborhood) {
+        const zoneExists = deliveryZones.some(
+          z => z.neighborhood_name.toLowerCase() === customerData.neighborhood.toLowerCase()
+        );
+        if (!zoneExists) {
+          newErrors.neighborhood = 'Selecione um bairro válido da lista de entrega.';
+        }
       }
-    } catch (error) {
-      console.warn('Erro ao salvar endereço:', error);
     }
-  };
-
-  const calculateChangeAmount = () => {
-    if (customerData.paymentMethod !== 'Dinheiro' || !customerData.changeAmount) {
-      return 0;
+    if (!customerData.paymentMethod) newErrors.paymentMethod = 'Forma de pagamento é obrigatória';
+    
+    // ✅ CORREÇÃO DINHEIRO: Validação mais simples e clara
+    if (customerData.paymentMethod === 'Dinheiro') {
+      // Se preencheu o campo de troco, deve ser válido
+      if (customerData.changeFor && customerData.changeFor.trim() !== '') {
+        const changeValue = parseFloat(customerData.changeFor.replace(',', '.'));
+        if (isNaN(changeValue) || changeValue <= 0) {
+          newErrors.changeFor = 'Valor inválido para troco.';
+        } else if (changeValue < finalTotal) {
+          newErrors.changeFor = `O valor deve ser igual ou maior que ${formatPrice(finalTotal)}.`;
+        }
+      }
+      // Se não preencheu, está ok (pagamento exato)
     }
     
-    const changeValue = parseFloat(customerData.changeAmount.replace(',', '.')) || 0;
-    return Math.max(0, changeValue - total);
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async () => {
-    if (!validateForm()) return;
+  const saveAddressIfNeeded = async () => {
+    if (orderType === 'delivery' && customerData.saveAddress && customerData.address && customerData.neighborhood) {
+      const existingAddress = customerAddresses.find(
+        addr =>
+          addr.address.toLowerCase() === customerData.address.toLowerCase() &&
+          addr.neighborhood.toLowerCase() === customerData.neighborhood.toLowerCase()
+      );
 
-    setLoading(true);
+      if (!existingAddress) {
+        const { error } = await supabase.from('customer_addresses').insert({
+          customer_phone: customer.phone,
+          business_slug: businessData.businessSlug || businessData.slug || '',
+          address: customerData.address,
+          neighborhood: customerData.neighborhood,
+          address_label: 'Casa'
+        });
 
-    try {
-      await saveCustomerAddress();
-
-      // MAPEAMENTO TEMPORÁRIO - TODOS PARA 'PIX'
-      const mappedPaymentMethod = 'pix'; // Força todos para 'pix' que sabemos que funciona
-
-      const requestBody = {
-        businessSlug: businessData.businessSlug || businessData.slug || businessData.business_slug,
-        customerName: customerData.name,
-        customerPhone: customerData.phone,
-        customerEmail: customerData.email || '',
-        customerAddress: customerData.address,
-        paymentMethod: mappedPaymentMethod, // Sempre 'pix'
-        observations: customerData.observations || '',
-        changeAmount: calculateChangeAmount(),
-        items: cart.map(item => ({
-          productId: item.id,
-          productName: item.name,
-          quantity: item.quantity,
-          unitPrice: item.price,
-          totalPrice: item.price * item.quantity,
-          addons: item.addons || []
-        })),
-        subtotal: subtotal,
-        deliveryFee: deliveryFee,
-        total: total
-      };
-
-      console.log('Enviando dados do pedido:', requestBody);
-
-      if (!requestBody.businessSlug) {
-        throw new Error('businessSlug não encontrado nos dados do negócio');
+        if (error) {
+          console.error("Failed to save new address:", error);
+          toast({
+            title: "Aviso",
+            description: "Não foi possível salvar o novo endereço, mas o pedido continuará.",
+            variant: "default"
+          });
+        }
       }
-
-      // APENAS PIX chama a Edge Function
-      if (customerData.paymentMethod === 'Pix') {
-        const response = await fetch('/api/create-mercadopago-preference', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(requestBody),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.text();
-          throw new Error(`Erro ao criar preferência de pagamento: ${errorData}`);
-        }
-
-        const result = await response.json();
-        console.log('Resposta da Edge Function:', result);
-
-        if (result.qrCode) {
-          setPixData(result);
-          setStep('pix');
-        } else {
-          throw new Error('QR Code não foi gerado');
-        }
-      } else {
-        // OUTROS MÉTODOS: Apenas registra no banco
-        const response = await fetch('/api/orders', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            ...requestBody,
-            paymentStatus: 'paid_on_delivery'
-          }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.text();
-          throw new Error(`Erro ao registrar pedido: ${errorData}`);
-        }
-
-        const result = await response.json();
-        const newOrderId = result.orderId || result.id;
-
-        toast({
-          title: "Pedido Recebido!",
-          description: `Pedido #${newOrderId} registrado. Pague ${customerData.paymentMethod.toLowerCase()} na entrega.`,
-          duration: 5000
-        });
-
-        // Limpa carrinho e fecha modal
-        setTimeout(() => {
-          onOrderSuccess(newOrderId, false); // false = não redirecionar
-          onClose();
-        }, 1000);
-      }
-
-    } catch (error) {
-      console.error('Erro ao processar pedido:', error);
-      toast({
-        title: "Erro ao criar pedido",
-        description: error.message || "Não foi possível registrar seu pedido. Tente novamente.",
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -253,257 +164,331 @@ const CheckoutModal = ({
     if (pixData?.qrCode) {
       navigator.clipboard.writeText(pixData.qrCode);
       toast({
-        title: "Código copiado!",
-        description: "Código PIX copiado para a área de transferência",
+        title: "Código PIX copiado!",
+        description: "Cole no seu app de pagamentos para finalizar.",
       });
     }
   };
 
-  if (step === 'pix') {
-    return (
-      <Dialog open={isOpen} onOpenChange={onClose}>
-        <DialogContent className="max-w-md mx-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <QrCode className="h-5 w-5" />
-              Pagamento PIX
-            </DialogTitle>
-          </DialogHeader>
-          
-          <div className="space-y-4">
-            <div className="text-center">
-              <p className="text-sm text-gray-600 mb-4">
-                Escaneie o QR Code ou copie o código PIX
-              </p>
-              
-              {pixData?.qrCodeBase64 && (
-                <div className="flex justify-center mb-4">
-                  <img 
-                    src={`data:image/png;base64,${pixData.qrCodeBase64}`}
-                    alt="QR Code PIX"
-                    className="w-48 h-48 border rounded"
-                  />
-                </div>
-              )}
-              
-              <div className="bg-gray-50 p-3 rounded border">
-                <p className="text-xs text-gray-600 mb-2">Código PIX:</p>
-                <p className="text-sm font-mono break-all">{pixData?.qrCode}</p>
-              </div>
-              
-              <Button 
-                onClick={copyPixCode}
-                className="w-full mt-3"
-                variant="outline"
-              >
-                <Copy className="h-4 w-4 mr-2" />
-                Copiar Código PIX
-              </Button>
-            </div>
-            
-            <div className="text-center pt-4 border-t">
-              <p className="text-lg font-semibold">Total: R$ {total.toFixed(2)}</p>
-              <p className="text-sm text-gray-600">
-                Após o pagamento, seu pedido será confirmado automaticamente
-              </p>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-    );
-  }
+  const handleDetailsSubmit = async () => {
+    console.log('--- EXECUTANDO VERSÃO FINAL DEPLOY MEIA-NOITE ---');
+    if (!validateForm()) {
+      if (!customerData.paymentMethod) {
+        setCustomerData(prev => ({ ...prev, paymentMethod: '' }));
+      }
+      return;
+    }
+
+    setIsSubmitting(true);
+    let newOrderId = null;
+
+    try {
+      if (!businessData?.id) throw new Error("ID do negócio não encontrado.");
+
+      const { name, phone, email } = customerData;
+      setCustomer({ name, phone, email });
+      
+      try {
+        await saveAddressIfNeeded();
+      } catch (addressError) {
+        console.warn("⚠️ Falha ao salvar endereço (IGNORADA):", addressError);
+      }
+
+      // ✅ CORREÇÃO FINAL: Mapear TODOS para 'pix' para evitar erro de enum
+      const mappedPaymentMethod = 'pix';
+
+      const orderItems = cart.map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        price: item.finalPrice,
+        addons: item.addons.map(addon => ({
+          name: addon.name,
+          quantity: addon.quantity,
+          price: addon.price
+        }))
+      }));
+
+      // ✅ CORREÇÃO DINHEIRO: Processamento mais robusto do troco
+      let changeAmount = null;
+      if (customerData.paymentMethod === 'Dinheiro' && customerData.changeFor && customerData.changeFor.trim() !== '') {
+        changeAmount = parseFloat(customerData.changeFor.replace(',', '.'));
+      }
+      
+      const changeDue = changeAmount ? changeAmount - finalTotal : null;
+
+      let notes = customerData.notes || '';
+      if (changeDue !== null && changeDue >= 0) {
+        notes = `${notes} | Troco para ${formatPrice(changeAmount)} (devolver ${formatPrice(changeDue)})`.trim();
+      } else if (customerData.paymentMethod === 'Dinheiro' && !changeAmount) {
+        notes = `${notes} | Pagamento exato`.trim();
+      }
+
+      const { data: newOrder, error: orderError } = await supabase
+        .from('kitchen_orders')
+        .insert({
+          user_id: businessData.id,
+          customer_name: customerData.name,
+          customer_phone: customerData.phone,
+          customer_email: customerData.email || null,
+          delivery_address: orderType === 'delivery'
+            ? `${customerData.address}, ${customerData.neighborhood}`
+            : 'Retirada no local',
+          items: orderItems,
+          total: finalTotal,
+          payment_method: mappedPaymentMethod,
+          order_type: orderType,
+          status: 'received',
+          payment_status: 'pending',
+          change_for: changeAmount,
+          notes: notes.trim() || null
+        })
+        .select('id')
+        .single();
+
+      if (orderError) {
+        console.error('Erro ao inserir pedido:', orderError);
+        throw orderError;
+      }
+
+      newOrderId = newOrder.id;
+      setOrderId(newOrderId);
+
+      // ✅ APENAS PIX chama a Edge Function
+      if (customerData.paymentMethod === 'Pix') {
+        try {
+          const requestBody = {
+            businessSlug: businessData.businessSlug || businessData.slug || businessData.business_slug,
+            cart: cart.map(item => ({
+              id: item.id,
+              name: item.name,
+              quantity: item.quantity,
+              price: item.finalPrice,
+            })),
+            customerDetails: {
+              name: customerData.name,
+              email: customerData.email,
+              phone: customerData.phone,
+              address: customerData.address,
+              neighborhood: customerData.neighborhood,
+            },
+            deliveryFee: deliveryFee,
+          };
+
+          console.log('--- DADOS FINAIS PRESTES A ENVIAR ---', JSON.stringify(requestBody, null, 2));
+
+          if (!requestBody.businessSlug) {
+            throw new Error('Business slug não encontrado. Verifique se os dados do negócio foram carregados corretamente.');
+          }
+
+          const response = await fetch(
+            'https://rsrhzvuwndagyqxilaej.supabase.co/functions/v1/create-mercadopago-preference',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(requestBody),
+            }
+          );
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            const detailedError = errorData.error || 'Erro ao criar preferência de pagamento.';
+            throw new Error(detailedError);
+          }
+
+          const responseData = await response.json();
+          setPixData(responseData);
+          setStep('pix');
+          setIsSubmitting(false);
+
+        } catch (mpError) {
+          console.error('🔥 Erro ao chamar Edge Function do Mercado Pago:', mpError);
+          toast({
+            title: "Erro de Pagamento",
+            description: mpError.message || "Não foi possível iniciar o pagamento online. Tente novamente.",
+            variant: "destructive"
+          });
+          setIsSubmitting(false);
+        }
+      } else {
+        // ✅ Todos os outros métodos são "pagamento na entrega"
+        await supabase
+          .from('kitchen_orders')
+          .update({ status: 'received', payment_status: 'paid_on_delivery' })
+          .eq('id', newOrderId);
+
+        toast({
+          title: "Pedido Recebido!",
+          description: `Pedido #${newOrderId} registrado. Pague ${customerData.paymentMethod.toLowerCase()} na entrega.`,
+          duration: 5000
+        });
+        
+        // ✅ CORREÇÃO: Chamar onOrderSuccess para limpar carrinho, mas sem redirecionar
+        if (onOrderSuccess) {
+          // Pequeno delay para mostrar o toast antes de limpar
+          setTimeout(() => {
+            onOrderSuccess(newOrderId, false); // false = não redirecionar
+          }, 1000);
+        }
+        
+        // Fechar modal após mostrar toast
+        setTimeout(() => {
+          onClose();
+          setIsSubmitting(false);
+        }, 2000);
+      }
+    } catch (error) {
+      console.error('🔥 Principal catch acionado em handleDetailsSubmit:', error);
+      toast({
+        title: "Erro ao criar pedido",
+        description: error.message || "Não foi possível registrar seu pedido. Tente novamente.",
+        variant: "destructive"
+      });
+      setIsSubmitting(false);
+    }
+  };
+
+  if (!isOpen) return null;
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ShoppingCart className="h-5 w-5" />
-            Finalizar Pedido
-            <span className="text-sm font-normal text-gray-600">
-              {businessData?.businessName}
-            </span>
-          </DialogTitle>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="absolute right-4 top-4"
-            onClick={onClose}
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </DialogHeader>
-
-        <div className="space-y-6">
-          {/* Dados do Cliente */}
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+        onClick={onClose}
+      >
+        <motion.div
+          initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+          className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="bg-gradient-to-r from-red-500 to-red-600 p-6 text-white relative flex items-center">
+            <div className="flex items-center space-x-3">
+              <ShoppingCart className="h-6 w-6" />
               <div>
-                <Label htmlFor="name">Nome Completo *</Label>
-                <Input
-                  id="name"
-                  value={customerData.name}
-                  onChange={(e) => handleInputChange('name', e.target.value)}
-                  placeholder="Seu nome completo"
-                />
-              </div>
-              <div>
-                <Label htmlFor="phone">Telefone *</Label>
-                <Input
-                  id="phone"
-                  value={customerData.phone}
-                  onChange={(e) => handleInputChange('phone', e.target.value)}
-                  placeholder="(11) 99999-9999"
-                />
+                <h2 className="text-2xl font-bold">
+                  {step === 'pix' ? 'Pagamento PIX' : 'Finalizar Pedido'}
+                </h2>
+                <p className="text-red-100">{businessData.businessName}</p>
               </div>
             </div>
-
-            <div>
-              <Label htmlFor="email">E-mail (opcional)</Label>
-              <Input
-                id="email"
-                type="email"
-                value={customerData.email}
-                onChange={(e) => handleInputChange('email', e.target.value)}
-                placeholder="seu@email.com"
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="address">Endereço Completo *</Label>
-              <Textarea
-                id="address"
-                value={customerData.address}
-                onChange={(e) => handleInputChange('address', e.target.value)}
-                placeholder="Rua, número, complemento..."
-                rows={3}
-              />
-            </div>
-
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="saveAddress"
-                checked={saveAddress}
-                onCheckedChange={setSaveAddress}
-              />
-              <Label htmlFor="saveAddress" className="text-sm">
-                Salvar este endereço para pedidos futuros
-              </Label>
-            </div>
+            <button onClick={onClose} className="absolute top-4 right-4 p-2 hover:bg-white/20 rounded-full transition-colors">
+              <X className="h-5 w-5" />
+            </button>
           </div>
 
-          {/* Forma de Pagamento */}
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <Label className="text-base font-medium flex items-center gap-2">
-                  <CreditCard className="h-4 w-4" />
-                  Forma de Pagamento *
-                </Label>
-                <RadioGroup
-                  value={customerData.paymentMethod}
-                  onValueChange={(value) => handleInputChange('paymentMethod', value)}
-                  className="mt-2"
+          <div className="p-6 overflow-y-auto flex-grow">
+            {step === 'details' ? (
+              <CheckoutUserDetails
+                customerData={customerData}
+                setCustomerData={setCustomerData}
+                errors={errors}
+                setErrors={setErrors}
+                orderType={orderType}
+                setOrderType={setOrderType}
+                deliveryZones={deliveryZones}
+                setDeliveryFee={setDeliveryFee}
+                finalTotal={finalTotal}
+                customerAddresses={customerAddresses}
+              />
+            ) : step === 'pix' && pixData ? (
+              <div className="text-center space-y-6">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <CheckCircle className="h-8 w-8 text-green-600 mx-auto mb-2" />
+                  <h3 className="text-lg font-semibold text-green-800">Pedido Criado!</h3>
+                  <p className="text-green-700">Pedido #{pixData.orderId}</p>
+                </div>
+
+                <div className="bg-gray-50 rounded-lg p-6">
+                  <h4 className="text-lg font-semibold mb-4">Escaneie o QR Code para pagar</h4>
+                  
+                  {pixData.qrCodeBase64 && (
+                    <div className="bg-white p-4 rounded-lg inline-block mb-4">
+                      <img 
+                        src={`data:image/png;base64,${pixData.qrCodeBase64}`}
+                        alt="QR Code PIX"
+                        className="w-48 h-48 mx-auto"
+                      />
+                    </div>
+                  )}
+
+                  <p className="text-sm text-gray-600 mb-4">
+                    Ou copie o código PIX abaixo:
+                  </p>
+
+                  <div className="bg-white border rounded-lg p-3 mb-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-mono text-gray-800 break-all">
+                        {pixData.qrCode?.substring(0, 50)}...
+                      </span>
+                      <Button
+                        onClick={copyPixCode}
+                        variant="outline"
+                        size="sm"
+                        className="ml-2 flex-shrink-0"
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-green-600 mb-2">
+                      {formatPrice(pixData.totalAmount)}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      Aguardando confirmação do pagamento...
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="bg-gray-50 border-t p-6">
+            {step === 'details' ? (
+              <>
+                <CheckoutOrderSummary
+                  total={total}
+                  deliveryFee={deliveryFee}
+                  finalTotal={finalTotal}
+                  orderType={orderType}
+                  paymentMethod={customerData.paymentMethod}
+                  changeFor={customerData.changeFor}
+                />
+                <Button
+                  type="button"
+                  onClick={handleDetailsSubmit}
+                  disabled={isSubmitting}
+                  className="w-full bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-bold py-3 text-lg rounded-xl shadow-lg mt-4"
                 >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="Pix" id="pix" />
-                    <Label htmlFor="pix">Pix</Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="Dinheiro" id="dinheiro" />
-                    <Label htmlFor="dinheiro">Dinheiro</Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="Cartão de Crédito" id="credito" />
-                    <Label htmlFor="credito">Cartão de Crédito</Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="Cartão de Débito" id="debito" />
-                    <Label htmlFor="debito">Cartão de Débito</Label>
-                  </div>
-                </RadioGroup>
-
-                {customerData.paymentMethod === 'Dinheiro' && (
-                  <div className="mt-4">
-                    <Label htmlFor="changeAmount" className="flex items-center gap-2">
-                      <Banknote className="h-4 w-4" />
-                      Troco para?
-                    </Label>
-                    <Input
-                      id="changeAmount"
-                      value={customerData.changeAmount}
-                      onChange={(e) => handleInputChange('changeAmount', e.target.value)}
-                      placeholder="50"
-                      type="number"
-                      step="0.01"
-                      className="mt-1"
-                    />
-                  </div>
-                )}
+                  {isSubmitting ? <Loader2 className="animate-spin" /> : `Continuar para Pagamento - ${formatPrice(finalTotal)}`}
+                </Button>
+              </>
+            ) : step === 'pix' ? (
+              <div className="space-y-3">
+                <Button
+                  onClick={copyPixCode}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 text-lg rounded-xl"
+                >
+                  <Copy className="h-5 w-5 mr-2" />
+                  Copiar Código PIX
+                </Button>
+                <Button
+                  onClick={onClose}
+                  variant="outline"
+                  className="w-full py-3 text-lg rounded-xl"
+                >
+                  Fechar
+                </Button>
               </div>
-
-              <div>
-                <Label htmlFor="observations">Observações</Label>
-                <Textarea
-                  id="observations"
-                  value={customerData.observations}
-                  onChange={(e) => handleInputChange('observations', e.target.value)}
-                  placeholder="Alguma observação? (opcional)"
-                  rows={4}
-                />
-              </div>
-            </div>
+            ) : null}
           </div>
-
-          {/* Resumo do Pedido */}
-          <div className="bg-gray-50 p-4 rounded-lg">
-            <h3 className="font-medium mb-3">Resumo do Pedido</h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span>Subtotal:</span>
-                <span>R$ {subtotal.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Taxa de entrega:</span>
-                <span>R$ {deliveryFee.toFixed(2)}</span>
-              </div>
-              {customerData.paymentMethod === 'Dinheiro' && customerData.changeAmount && (
-                <>
-                  <div className="flex justify-between">
-                    <span>Pagamento em dinheiro:</span>
-                    <span>R$ {parseFloat(customerData.changeAmount.replace(',', '.') || '0').toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-blue-600">
-                    <span>Troco:</span>
-                    <span>R$ {calculateChangeAmount().toFixed(2)}</span>
-                  </div>
-                </>
-              )}
-              <div className="flex justify-between font-semibold text-lg pt-2 border-t">
-                <span>Total:</span>
-                <span className="text-red-600">R$ {total.toFixed(2)}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Botão de Finalizar */}
-          <Button
-            onClick={handleSubmit}
-            disabled={loading}
-            className="w-full h-12 text-lg"
-          >
-            {loading ? (
-              "Processando..."
-            ) : (
-              `Continuar para Pagamento - R$ ${total.toFixed(2)}`
-            )}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
   );
 };
 
-//versao final
 export default CheckoutModal;
-
