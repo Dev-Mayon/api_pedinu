@@ -253,6 +253,9 @@ const CheckoutModal = ({
             deliveryFee: deliveryFee,
           };
 
+          // ✅ É EXATAMENTE AQUI QUE A LINHA DEVE SER ADICIONADA
+          console.log('--- DADOS FINAIS PRESTES A ENVIAR ---', JSON.stringify(requestBody, null, 2));
+
           const response = await fetch(
             'https://rsrhzvuwndagyqxilaej.supabase.co/functions/v1/create-mercadopago-preference',
             {
