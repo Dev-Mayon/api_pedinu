@@ -33,6 +33,9 @@ const useCatalogData = (businessSlug, toast) => {
 
       const businessInfo = catalogData[0];
 
+      // ✅ DEBUG FINAL: A linha abaixo foi adicionada para o nosso teste
+      console.log('--- DADOS BRUTOS DO BANCO (businessInfo) ---', businessInfo);
+
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('id')
@@ -44,7 +47,7 @@ const useCatalogData = (businessSlug, toast) => {
         throw profileError;
       }
 
-      const userId = profileData.id; // Este é o ID do perfil/negócio que precisamos
+      const userId = profileData.id;
 
       const { data: deliveryZones, error: deliveryError } = await supabase
         .from('delivery_zones')
@@ -65,11 +68,11 @@ const useCatalogData = (businessSlug, toast) => {
         ...category,
         products: products.filter(product => product.category_id === category.id)
       }));
-      // AQUI É ONDE O ID DO NEGÓCIO E O SLUG SÃO ADICIONADOS CORRETAMENTE!
+      
       const formattedBusinessData = {
         id: userId,
         businessName: businessInfo.business_name,
-        businessSlug: businessSlug, // ✅✅✅ CORREÇÃO FINAL ✅✅✅
+        businessSlug: businessSlug,
         categories: categoriesWithProducts,
         products: products,
         addonGroups: addonGroups,
