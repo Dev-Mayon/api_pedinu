@@ -26,7 +26,7 @@ const CheckoutModal = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderType, setOrderType] = useState('delivery');
 
-  // ✅ NOVO: Estados para PIX
+  // ✅ Estados para PIX
   const [pixData, setPixData] = useState(null);
   const [paymentStatus, setPaymentStatus] = useState('pending');
 
@@ -45,7 +45,7 @@ const CheckoutModal = ({
       setStep('details');
       setOrderId(null);
       setOrderType('delivery');
-      // ✅ NOVO: Reset PIX data
+      // Reset PIX data
       setPixData(null);
       setPaymentStatus('pending');
 
@@ -152,7 +152,7 @@ const CheckoutModal = ({
     }
   };
 
-  // ✅ NOVO: Função para copiar código PIX
+  // Função para copiar código PIX
   const copyPixCode = () => {
     if (pixData?.qrCode) {
       navigator.clipboard.writeText(pixData.qrCode);
@@ -238,18 +238,8 @@ const CheckoutModal = ({
       newOrderId = newOrder.id;
       setOrderId(newOrderId);
 
-      if (['Dinheiro', 'Cartão de Débito'].includes(customerData.paymentMethod)) {
-        await supabase
-          .from('kitchen_orders')
-          .update({ status: 'received', payment_status: 'paid_on_delivery' })
-          .eq('id', newOrderId);
-
-        toast({
-          title: "Pedido Recebido!",
-          description: "Seu pedido foi registrado. Pague na entrega."
-        });
-        onOrderSuccess(newOrderId);
-      } else if (['Pix', 'Cartão de Crédito'].includes(customerData.paymentMethod)) {
+      // ✅ CORREÇÃO CRÍTICA: Apenas PIX chama a Edge Function
+      if (customerData.paymentMethod === 'Pix') {
         try {
           const requestBody = {
             businessSlug: businessData.businessSlug || businessData.slug || businessData.business_slug,
@@ -294,17 +284,10 @@ const CheckoutModal = ({
 
           const responseData = await response.json();
 
-          // ✅ NOVO: Detectar se é PIX ou cartão baseado na resposta
-          if (responseData.paymentType === 'pix') {
-            // PIX: Exibir QR Code
-            setPixData(responseData);
-            setStep('pix');
-            setIsSubmitting(false);
-          } else {
-            // Cartão: Redirecionar (comportamento original)
-            const redirectUrl = `https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=${responseData.preferenceId}`;
-            window.location.href = redirectUrl;
-          }
+          // PIX: Exibir QR Code
+          setPixData(responseData);
+          setStep('pix');
+          setIsSubmitting(false);
 
         } catch (mpError) {
           console.error('🔥 Erro ao chamar Edge Function do Mercado Pago:', mpError);
@@ -315,6 +298,19 @@ const CheckoutModal = ({
           });
           setIsSubmitting(false);
         }
+      } else {
+        // ✅ CORREÇÃO: Todos os outros métodos são "pagamento na entrega"
+        await supabase
+          .from('kitchen_orders')
+          .update({ status: 'received', payment_status: 'paid_on_delivery' })
+          .eq('id', newOrderId);
+
+        toast({
+          title: "Pedido Recebido!",
+          description: `Seu pedido foi registrado. Pague ${customerData.paymentMethod.toLowerCase()} na entrega.`
+        });
+        onOrderSuccess(newOrderId);
+        setIsSubmitting(false);
       }
     } catch (error) {
       console.error('🔥 Principal catch acionado em handleDetailsSubmit:', error);
@@ -323,10 +319,7 @@ const CheckoutModal = ({
         description: "Não foi possível registrar seu pedido. Tente novamente.",
         variant: "destructive"
       });
-    } finally {
-      if (!['Pix', 'Cartão de Crédito'].includes(customerData.paymentMethod)) {
-        setIsSubmitting(false);
-      }
+      setIsSubmitting(false);
     }
   };
 
@@ -374,7 +367,7 @@ const CheckoutModal = ({
                 customerAddresses={customerAddresses}
               />
             ) : step === 'pix' && pixData ? (
-              // ✅ NOVO: Tela do QR Code PIX
+              // Tela do QR Code PIX
               <div className="text-center space-y-6">
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                   <CheckCircle className="h-8 w-8 text-green-600 mx-auto mb-2" />
@@ -474,3 +467,4 @@ const CheckoutModal = ({
 };
 
 export default CheckoutModal;
+
