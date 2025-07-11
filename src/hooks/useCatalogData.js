@@ -72,7 +72,10 @@ const useCatalogData = (businessSlug, toast) => {
       const formattedBusinessData = {
         id: userId,
         businessName: businessInfo.business_name,
-        businessSlug: businessSlug,
+        // ✅ CORREÇÃO CRÍTICA: Usar o business_slug que vem do banco de dados
+        // em vez de usar o parâmetro businessSlug que pode estar incorreto
+        businessSlug: businessInfo.business_slug || businessSlug,
+        slug: businessInfo.business_slug || businessSlug, // Adicionando também como 'slug' para compatibilidade
         categories: categoriesWithProducts,
         products: products,
         addonGroups: addonGroups,
@@ -88,6 +91,11 @@ const useCatalogData = (businessSlug, toast) => {
           whatsapp: businessInfo.whatsapp,
           description: businessInfo.description,
           address: businessInfo.address
+        },
+        // ✅ ADICIONANDO DADOS DE PAGAMENTO que podem ser necessários no checkout
+        paymentSettings: {
+          mercadopago_public_key: businessInfo.mercadopago_public_key,
+          mercadopago_access_token: businessInfo.mercadopago_access_token
         }
       };
 

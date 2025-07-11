@@ -10,7 +10,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { supabase } from '@/lib/customSupabaseClient';
 import CheckoutUserDetails from '@/components/public_catalog/checkout/CheckoutUserDetails';
 import CheckoutOrderSummary from '@/components/public_catalog/checkout/CheckoutOrderSummary';
-//versao final
+
 const CheckoutModal = ({
   isOpen,
   onClose,
@@ -60,12 +60,12 @@ const CheckoutModal = ({
   }, [customer, isOpen, selectedAddress, customerAddresses]);
 
   const fetchCustomerAddresses = useCallback(async () => {
-    if (customer.phone && businessData.business_slug) {
+    if (customer.phone && businessData.businessSlug) {
       const { data, error } = await supabase
         .from('customer_addresses')
         .select('*')
         .eq('customer_phone', customer.phone)
-        .eq('business_slug', businessData.business_slug);
+        .eq('business_slug', businessData.businessSlug);
 
       if (!error && data) {
         setCustomerAddresses(data);
@@ -79,7 +79,7 @@ const CheckoutModal = ({
         }
       }
     }
-  }, [customer.phone, businessData.business_slug, selectedAddress]);
+  }, [customer.phone, businessData.businessSlug, selectedAddress]);
 
   useEffect(() => {
     if (isOpen) {
@@ -127,7 +127,7 @@ const CheckoutModal = ({
       if (!existingAddress) {
         const { error } = await supabase.from('customer_addresses').insert({
           customer_phone: customer.phone,
-          business_slug: businessData.business_slug || '',
+          business_slug: businessData.businessSlug || businessData.slug || '',
           address: customerData.address,
           neighborhood: customerData.neighborhood,
           address_label: 'Casa'
@@ -233,10 +233,10 @@ const CheckoutModal = ({
         onOrderSuccess(newOrderId);
       } else if (['Pix', 'Cartão de Crédito'].includes(customerData.paymentMethod)) {
         try {
-          // Criamos o corpo da requisição em uma variável para maior clareza
+          // ✅ CORREÇÃO CRÍTICA: Garantir que o businessSlug seja enviado corretamente
           const requestBody = {
-            // ✅ AQUI ESTAVA O ERRO: Garantimos o uso de 'business_slug' com underscore
-            businessSlug: businessData.business_slug,
+            // Prioriza businessSlug, depois slug, depois business_slug como fallback
+            businessSlug: businessData.businessSlug || businessData.slug || businessData.business_slug,
             cart: cart.map(item => ({
               id: item.id,
               name: item.name,
@@ -253,8 +253,14 @@ const CheckoutModal = ({
             deliveryFee: deliveryFee,
           };
 
-          // ✅ É EXATAMENTE AQUI QUE A LINHA DEVE SER ADICIONADA
+          // ✅ DEBUG: Verificar se o businessSlug está presente antes do envio
           console.log('--- DADOS FINAIS PRESTES A ENVIAR ---', JSON.stringify(requestBody, null, 2));
+          console.log('--- BUSINESS DATA COMPLETO ---', businessData);
+
+          // ✅ VALIDAÇÃO ADICIONAL: Verificar se o businessSlug existe
+          if (!requestBody.businessSlug) {
+            throw new Error('Business slug não encontrado. Verifique se os dados do negócio foram carregados corretamente.');
+          }
 
           const response = await fetch(
             'https://rsrhzvuwndagyqxilaej.supabase.co/functions/v1/create-mercadopago-preference',
@@ -317,7 +323,6 @@ const CheckoutModal = ({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="bg-gradient-to-r from-red-500 to-red-600 p-6 text-white relative flex items-center">
-            {/* ... o resto do seu JSX continua igual ... */}
             <div className="flex items-center space-x-3">
               <ShoppingCart className="h-6 w-6" />
               <div>
