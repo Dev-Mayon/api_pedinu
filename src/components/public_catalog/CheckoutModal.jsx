@@ -113,15 +113,18 @@ const CheckoutModal = ({
     }
     if (!customerData.paymentMethod) newErrors.paymentMethod = 'Forma de pagamento é obrigatória';
     
-    // ✅ CORREÇÃO: Validação mais flexível para dinheiro
+    // ✅ CORREÇÃO DINHEIRO: Validação mais simples e clara
     if (customerData.paymentMethod === 'Dinheiro') {
-      if (customerData.changeFor && customerData.changeFor.trim()) {
-        const changeValue = parseFloat(customerData.changeFor);
-        if (isNaN(changeValue) || changeValue < finalTotal) {
+      // Se preencheu o campo de troco, deve ser válido
+      if (customerData.changeFor && customerData.changeFor.trim() !== '') {
+        const changeValue = parseFloat(customerData.changeFor.replace(',', '.'));
+        if (isNaN(changeValue) || changeValue <= 0) {
+          newErrors.changeFor = 'Valor inválido para troco.';
+        } else if (changeValue < finalTotal) {
           newErrors.changeFor = `O valor deve ser igual ou maior que ${formatPrice(finalTotal)}.`;
         }
       }
-      // Se não preencheu troco, não é erro - pode pagar exato
+      // Se não preencheu, está ok (pagamento exato)
     }
     
     setErrors(newErrors);
@@ -210,9 +213,12 @@ const CheckoutModal = ({
         }))
       }));
 
-      // ✅ CORREÇÃO: Troco pode ser null se não preenchido
-      const changeAmount = customerData.paymentMethod === 'Dinheiro' && customerData.changeFor && customerData.changeFor.trim()
-          ? parseFloat(customerData.changeFor) : null;
+      // ✅ CORREÇÃO DINHEIRO: Processamento mais robusto do troco
+      let changeAmount = null;
+      if (customerData.paymentMethod === 'Dinheiro' && customerData.changeFor && customerData.changeFor.trim() !== '') {
+        changeAmount = parseFloat(customerData.changeFor.replace(',', '.'));
+      }
+      
       const changeDue = changeAmount ? changeAmount - finalTotal : null;
 
       let notes = customerData.notes || '';
@@ -239,12 +245,15 @@ const CheckoutModal = ({
           status: 'received',
           payment_status: 'pending',
           change_for: changeAmount,
-          notes: notes
+          notes: notes.trim() || null
         })
         .select('id')
         .single();
 
-      if (orderError) throw orderError;
+      if (orderError) {
+        console.error('Erro ao inserir pedido:', orderError);
+        throw orderError;
+      }
 
       newOrderId = newOrder.id;
       setOrderId(newOrderId);
@@ -308,7 +317,7 @@ const CheckoutModal = ({
           setIsSubmitting(false);
         }
       } else {
-        // ✅ CORREÇÃO: Todos os outros métodos são "pagamento na entrega" SEM redirecionamento
+        // ✅ Todos os outros métodos são "pagamento na entrega"
         await supabase
           .from('kitchen_orders')
           .update({ status: 'received', payment_status: 'paid_on_delivery' })
@@ -320,7 +329,15 @@ const CheckoutModal = ({
           duration: 5000
         });
         
-        // ✅ CORREÇÃO: Fechar modal em vez de redirecionar
+        // ✅ CORREÇÃO: Chamar onOrderSuccess para limpar carrinho, mas sem redirecionar
+        if (onOrderSuccess) {
+          // Pequeno delay para mostrar o toast antes de limpar
+          setTimeout(() => {
+            onOrderSuccess(newOrderId, false); // false = não redirecionar
+          }, 1000);
+        }
+        
+        // Fechar modal após mostrar toast
         setTimeout(() => {
           onClose();
           setIsSubmitting(false);
@@ -330,7 +347,7 @@ const CheckoutModal = ({
       console.error('🔥 Principal catch acionado em handleDetailsSubmit:', error);
       toast({
         title: "Erro ao criar pedido",
-        description: "Não foi possível registrar seu pedido. Tente novamente.",
+        description: error.message || "Não foi possível registrar seu pedido. Tente novamente.",
         variant: "destructive"
       });
       setIsSubmitting(false);
@@ -480,4 +497,3 @@ const CheckoutModal = ({
 };
 
 export default CheckoutModal;
-
