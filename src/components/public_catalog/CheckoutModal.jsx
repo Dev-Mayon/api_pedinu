@@ -113,9 +113,7 @@ const CheckoutModal = ({
     }
     if (!customerData.paymentMethod) newErrors.paymentMethod = 'Forma de pagamento é obrigatória';
     
-    // ✅ CORREÇÃO DINHEIRO: Validação mais simples e clara
     if (customerData.paymentMethod === 'Dinheiro') {
-      // Se preencheu o campo de troco, deve ser válido
       if (customerData.changeFor && customerData.changeFor.trim() !== '') {
         const changeValue = parseFloat(customerData.changeFor.replace(',', '.'));
         if (isNaN(changeValue) || changeValue <= 0) {
@@ -124,7 +122,6 @@ const CheckoutModal = ({
           newErrors.changeFor = `O valor deve ser igual ou maior que ${formatPrice(finalTotal)}.`;
         }
       }
-      // Se não preencheu, está ok (pagamento exato)
     }
     
     setErrors(newErrors);
@@ -171,7 +168,6 @@ const CheckoutModal = ({
   };
 
   const handleDetailsSubmit = async () => {
-    console.log('--- EXECUTANDO VERSÃO FINAL DEPLOY MEIA-NOITE ---');
     if (!validateForm()) {
       if (!customerData.paymentMethod) {
         setCustomerData(prev => ({ ...prev, paymentMethod: '' }));
@@ -180,11 +176,8 @@ const CheckoutModal = ({
     }
 
     setIsSubmitting(true);
-    let newOrderId = null;
 
     try {
-      if (!businessData?.id) throw new Error("ID do negócio não encontrado.");
-
       const { name, phone, email } = customerData;
       setCustomer({ name, phone, email });
       
@@ -194,157 +187,90 @@ const CheckoutModal = ({
         console.warn("⚠️ Falha ao salvar endereço (IGNORADA):", addressError);
       }
 
-      // ✅ CORREÇÃO FINAL: Mapear TODOS para 'pix' para evitar erro de enum
-      const mappedPaymentMethod = 'pix';
+      // ✅ TODOS OS MÉTODOS USAM A MESMA EDGE FUNCTION QUE FUNCIONA
+      const requestBody = {
+        businessSlug: businessData.businessSlug || businessData.slug || businessData.business_slug,
+        paymentMethod: customerData.paymentMethod, // Envia o método real para a Edge Function decidir
+        cart: cart.map(item => ({
+          id: item.id,
+          name: item.name,
+          quantity: item.quantity,
+          price: item.finalPrice,
+        })),
+        customerDetails: {
+          name: customerData.name,
+          email: customerData.email,
+          phone: customerData.phone,
+          address: customerData.address,
+          neighborhood: customerData.neighborhood,
+        },
+        deliveryFee: deliveryFee,
+        total: finalTotal,
+        orderType: orderType,
+        notes: customerData.notes,
+        changeFor: customerData.changeFor
+      };
 
-      const orderItems = cart.map(item => ({
-        name: item.name,
-        quantity: item.quantity,
-        price: item.finalPrice,
-        addons: item.addons.map(addon => ({
-          name: addon.name,
-          quantity: addon.quantity,
-          price: addon.price
-        }))
-      }));
+      console.log('--- ENVIANDO PARA EDGE FUNCTION ---', JSON.stringify(requestBody, null, 2));
 
-      // ✅ CORREÇÃO DINHEIRO: Processamento mais robusto do troco
-      let changeAmount = null;
-      if (customerData.paymentMethod === 'Dinheiro' && customerData.changeFor && customerData.changeFor.trim() !== '') {
-        changeAmount = parseFloat(customerData.changeFor.replace(',', '.'));
-      }
-      
-      const changeDue = changeAmount ? changeAmount - finalTotal : null;
-
-      let notes = customerData.notes || '';
-      if (changeDue !== null && changeDue >= 0) {
-        notes = `${notes} | Troco para ${formatPrice(changeAmount)} (devolver ${formatPrice(changeDue)})`.trim();
-      } else if (customerData.paymentMethod === 'Dinheiro' && !changeAmount) {
-        notes = `${notes} | Pagamento exato`.trim();
-      }
-
-      const { data: newOrder, error: orderError } = await supabase
-        .from('kitchen_orders')
-        .insert({
-          user_id: businessData.id,
-          customer_name: customerData.name,
-          customer_phone: customerData.phone,
-          customer_email: customerData.email || null,
-          delivery_address: orderType === 'delivery'
-            ? `${customerData.address}, ${customerData.neighborhood}`
-            : 'Retirada no local',
-          items: orderItems,
-          total: finalTotal,
-          payment_method: mappedPaymentMethod,
-          order_type: orderType,
-          status: 'received',
-          payment_status: 'pending',
-          change_for: changeAmount,
-          notes: notes.trim() || null
-        })
-        .select('id')
-        .single();
-
-      if (orderError) {
-        console.error('Erro ao inserir pedido:', orderError);
-        throw orderError;
+      if (!requestBody.businessSlug) {
+        throw new Error('Business slug não encontrado. Verifique se os dados do negócio foram carregados corretamente.');
       }
 
-      newOrderId = newOrder.id;
-      setOrderId(newOrderId);
-
-      // ✅ APENAS PIX chama a Edge Function
-      if (customerData.paymentMethod === 'Pix') {
-        try {
-          const requestBody = {
-            businessSlug: businessData.businessSlug || businessData.slug || businessData.business_slug,
-            cart: cart.map(item => ({
-              id: item.id,
-              name: item.name,
-              quantity: item.quantity,
-              price: item.finalPrice,
-            })),
-            customerDetails: {
-              name: customerData.name,
-              email: customerData.email,
-              phone: customerData.phone,
-              address: customerData.address,
-              neighborhood: customerData.neighborhood,
-            },
-            deliveryFee: deliveryFee,
-          };
-
-          console.log('--- DADOS FINAIS PRESTES A ENVIAR ---', JSON.stringify(requestBody, null, 2));
-
-          if (!requestBody.businessSlug) {
-            throw new Error('Business slug não encontrado. Verifique se os dados do negócio foram carregados corretamente.');
-          }
-
-          const response = await fetch(
-            'https://rsrhzvuwndagyqxilaej.supabase.co/functions/v1/create-mercadopago-preference',
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(requestBody),
-            }
-          );
-
-          if (!response.ok) {
-            const errorData = await response.json();
-            const detailedError = errorData.error || 'Erro ao criar preferência de pagamento.';
-            throw new Error(detailedError);
-          }
-
-          const responseData = await response.json();
-          setPixData(responseData);
-          setStep('pix');
-          setIsSubmitting(false);
-
-        } catch (mpError) {
-          console.error('🔥 Erro ao chamar Edge Function do Mercado Pago:', mpError);
-          toast({
-            title: "Erro de Pagamento",
-            description: mpError.message || "Não foi possível iniciar o pagamento online. Tente novamente.",
-            variant: "destructive"
-          });
-          setIsSubmitting(false);
+      const response = await fetch(
+        'https://rsrhzvuwndagyqxilaej.supabase.co/functions/v1/create-mercadopago-preference',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         }
-      } else {
-        // ✅ Todos os outros métodos são "pagamento na entrega"
-        await supabase
-          .from('kitchen_orders')
-          .update({ status: 'received', payment_status: 'paid_on_delivery' })
-          .eq('id', newOrderId);
+      );
 
+      if (!response.ok) {
+        const errorData = await response.json();
+        const detailedError = errorData.error || 'Erro ao processar pagamento.';
+        throw new Error(detailedError);
+      }
+
+      const responseData = await response.json();
+      console.log('--- RESPOSTA DA EDGE FUNCTION ---', responseData);
+
+      // ✅ Se retornou QR Code, é PIX
+      if (responseData.qrCode) {
+        setPixData(responseData);
+        setStep('pix');
+      } else {
+        // ✅ Se não retornou QR Code, é pagamento na entrega
+        const newOrderId = responseData.orderId || responseData.id;
+        
         toast({
           title: "Pedido Recebido!",
           description: `Pedido #${newOrderId} registrado. Pague ${customerData.paymentMethod.toLowerCase()} na entrega.`,
           duration: 5000
         });
         
-        // ✅ CORREÇÃO: Chamar onOrderSuccess para limpar carrinho, mas sem redirecionar
+        // Limpar carrinho e fechar modal
         if (onOrderSuccess) {
-          // Pequeno delay para mostrar o toast antes de limpar
           setTimeout(() => {
             onOrderSuccess(newOrderId, false); // false = não redirecionar
           }, 1000);
         }
         
-        // Fechar modal após mostrar toast
         setTimeout(() => {
           onClose();
-          setIsSubmitting(false);
         }, 2000);
       }
+
     } catch (error) {
-      console.error('🔥 Principal catch acionado em handleDetailsSubmit:', error);
+      console.error('🔥 Erro ao processar pedido:', error);
       toast({
         title: "Erro ao criar pedido",
         description: error.message || "Não foi possível registrar seu pedido. Tente novamente.",
         variant: "destructive"
       });
+    } finally {
       setIsSubmitting(false);
     }
   };
