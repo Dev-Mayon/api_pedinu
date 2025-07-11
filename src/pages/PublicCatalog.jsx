@@ -215,9 +215,8 @@ const PublicDigitalMenu = () => {
         onIdentified={onIdentified}
       />
 
-      {/* ✅✅✅ CORREÇÃO FINAL APLICADA AQUI ✅✅✅ */}
-      {/* Renderiza o Modal SÓ SE a busca de dados terminou E o businessData tem o slug */}
-      {isCheckoutOpen && !loading && businessData?.business_slug && (
+      {/* ✅✅✅ CORREÇÃO FINAL: Removendo a trava de segurança que não é mais necessária ✅✅✅ */}
+      {isCheckoutOpen && (
         <CheckoutModal
           isOpen={isCheckoutOpen}
           onClose={() => setIsCheckoutOpen(false)}
