@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
             cart, 
             customerDetails, 
             deliveryFee = 0,
-            paymentMethod = 'Pix' // Ex: "Pix", "Crédito", "Débito", "Dinheiro" (vindo do frontend)
+            paymentMethod = 'Pix' // Ex: "Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro"
         } = body;
 
         const supabase = createClient(
@@ -70,29 +70,26 @@ Deno.serve(async (req) => {
         }
         const totalAmount = itemsForMp.reduce((sum, i) => sum + i.unit_price * i.quantity, 0);
 
-        // --- INÍCIO DA CORREÇÃO E MAPEAMENTO ---
-        let dbPaymentMethod; // Variável para o valor que será salvo no banco
-        let paymentStatus;   // Variável para o status de pagamento
+        // --- INÍCIO DA CORREÇÃO E MAPEAMENTO NA EDGE FUNCTION ---
+        let dbPaymentMethod; 
+        let paymentStatus;   
 
         if (paymentMethod === 'Pix') {
             dbPaymentMethod = 'pix';
             paymentStatus = 'pending';
-        } else if (paymentMethod === 'Crédito' || paymentMethod === 'Débito') {
-            // Mapeia "Crédito" e "Débito" para 'card_on_delivery' (conforme seu enum)
+        } else if (paymentMethod === 'Cartão de Crédito' || paymentMethod === 'Cartão de Débito') { // <--- CORREÇÃO AQUI
             dbPaymentMethod = 'card_on_delivery'; 
             paymentStatus = 'paid_on_delivery';
         } else if (paymentMethod === 'Dinheiro') {
-            // Mapeia "Dinheiro" para 'cash_on_delivery' (conforme seu enum)
             dbPaymentMethod = 'cash_on_delivery'; 
             paymentStatus = 'paid_on_delivery';
         } else {
-            // Se o método de pagamento não for reconhecido, lança um erro
-            throw new Response(JSON.stringify({ error: `Método de pagamento inválido: ${paymentMethod}. Métodos aceitos: Pix, Crédito, Débito, Dinheiro.` }), {
+            throw new Response(JSON.stringify({ error: `Método de pagamento inválido: ${paymentMethod}. Métodos aceitos: Pix, Cartão de Crédito, Cartão de Débito, Dinheiro.` }), {
                 status: 400,
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
         }
-        // --- FIM DA CORREÇÃO E MAPEAMENTO ---
+        // --- FIM DA CORREÇÃO E MAPEAMENTO NA EDGE FUNCTION ---
 
         // 3. Cria o pedido no banco (SEMPRE)
         const orderForDb = {
@@ -103,10 +100,10 @@ Deno.serve(async (req) => {
             delivery_address: `${customerDetails.address}, ${customerDetails.neighborhood}`,
             items: cart,
             total: totalAmount,
-            payment_method: dbPaymentMethod, // ✅ AGORA USA O VALOR CORRETO MAPEADO DO ENUM
+            payment_method: dbPaymentMethod, 
             order_type: deliveryFee > 0 ? 'delivery' : 'pickup',
             status: 'received',
-            payment_status: paymentStatus, // ✅ AGORA USA O STATUS CORRETO MAPEADO
+            payment_status: paymentStatus, 
         };
 
         const { data: newOrder, error: orderError } = await supabase
@@ -186,10 +183,10 @@ Deno.serve(async (req) => {
         } else {
             // ✅ OUTROS MÉTODOS: Apenas confirmação (sem QR Code)
             return new Response(JSON.stringify({ 
-                paymentType: dbPaymentMethod, // Retorna o tipo de pagamento mapeado para o frontend
+                paymentType: dbPaymentMethod, 
                 orderId: internalOrderId,
                 totalAmount: totalAmount,
-                message: `Pedido registrado. Pague ${paymentMethod.toLowerCase()} na entrega.` // Mantém a mensagem original para o frontend
+                message: `Pedido registrado. Pague ${paymentMethod.toLowerCase()} na entrega.` 
             }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });

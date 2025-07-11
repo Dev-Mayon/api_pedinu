@@ -28,7 +28,7 @@ const CheckoutModal = ({
 
   // Estados para PIX
   const [pixData, setPixData] = useState(null);
-  const [paymentStatus, setPaymentStatus] = useState('pending');
+  const [paymentStatus, setPaymentStatus] = useState('pending'); // Mantido, mas a lógica de status agora é mais controlada pela EF
 
   const [customerData, setCustomerData] = useState({
     name: '', phone: '', email: '', neighborhood: '', address: '',
@@ -46,7 +46,7 @@ const CheckoutModal = ({
       setOrderId(null);
       setOrderType('delivery');
       setPixData(null);
-      setPaymentStatus('pending');
+      setPaymentStatus('pending'); // Resetar para pending ao abrir
 
       const defaultAddress = selectedAddress || customerAddresses.find(a => a.is_default);
 
@@ -187,7 +187,6 @@ const CheckoutModal = ({
         console.warn("⚠️ Falha ao salvar endereço (IGNORADA):", addressError);
       }
 
-      // ✅ TODOS OS MÉTODOS USAM A MESMA EDGE FUNCTION QUE FUNCIONA
       const requestBody = {
         businessSlug: businessData.businessSlug || businessData.slug || businessData.business_slug,
         paymentMethod: customerData.paymentMethod, // Envia o método real para a Edge Function decidir
@@ -228,22 +227,27 @@ const CheckoutModal = ({
         }
       );
 
+      // Verificação da resposta da Edge Function:
       if (!response.ok) {
         const errorData = await response.json();
-        const detailedError = errorData.error || 'Erro ao processar pagamento.';
-        throw new Error(detailedError);
+        const detailedError = errorData.error || 'Erro desconhecido ao processar pagamento.';
+        console.error('🔥 Erro da Edge Function (resposta não OK):', response.status, detailedError);
+        throw new Error(detailedError); // Isso será capturado pelo bloco catch abaixo
       }
 
       const responseData = await response.json();
-      console.log('--- RESPOSTA DA EDGE FUNCTION ---', responseData);
+      console.log('--- RESPOSTA DA EDGE FUNCTION (SUCESSO) ---', responseData);
 
       // ✅ Se retornou QR Code, é PIX
       if (responseData.qrCode) {
+        console.log('DEBUG: Recebeu dados PIX. Definindo step para "pix".');
         setPixData(responseData);
         setStep('pix');
       } else {
         // ✅ Se não retornou QR Code, é pagamento na entrega
+        console.log('DEBUG: Não é PIX. Processando pagamento na entrega.');
         const newOrderId = responseData.orderId || responseData.id;
+        console.log('DEBUG: orderId para pagamento na entrega:', newOrderId);
         
         toast({
           title: "Pedido Recebido!",
@@ -253,18 +257,24 @@ const CheckoutModal = ({
         
         // Limpar carrinho e fechar modal
         if (onOrderSuccess) {
-          setTimeout(() => {
+          console.log('DEBUG: Chamando onOrderSuccess...');
+          // É importante garantir que onOrderSuccess não lance erros
+          try {
             onOrderSuccess(newOrderId, false); // false = não redirecionar
-          }, 1000);
+          } catch (e) {
+            console.error("⚠️ Erro ao executar onOrderSuccess:", e);
+            // Poderia adicionar um toast de aviso aqui se for crítico
+          }
         }
         
+        console.log('DEBUG: Fechando modal em 2 segundos...');
         setTimeout(() => {
           onClose();
         }, 2000);
       }
 
     } catch (error) {
-      console.error('🔥 Erro ao processar pedido:', error);
+      console.error('🔥 Erro ao processar pedido (FRONTEND CATCH):', error);
       toast({
         title: "Erro ao criar pedido",
         description: error.message || "Não foi possível registrar seu pedido. Tente novamente.",
@@ -272,6 +282,7 @@ const CheckoutModal = ({
       });
     } finally {
       setIsSubmitting(false);
+      console.log('DEBUG: isSubmitting setado para false.');
     }
   };
 
